@@ -406,7 +406,9 @@ export const shipmentService = {
                          req?.user?.role && 
                          ['COMPANY_ADMIN', 'COMPANY_STAFF', 'SUPER_ADMIN'].includes(req.user.role);
     
-    if (!isCompanyUser) {
+    // Company users can always view their own shipments (no verification check)
+    // Public/customers can only view verified company shipments
+    if (!isCompanyUser && !shipment.company.isVerified) {
       throw new NotFoundError('Shipment not found');
     }
     
