@@ -1,0 +1,336 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CUSTOMER
+  COMPANY_ADMIN
+  COMPANY_STAFF
+  SUPER_ADMIN
+}
+
+enum ShipmentMode {
+  AIR
+  BUS
+  VAN
+  TRAIN
+  SHIP
+  RIDER
+}
+
+enum PricingModel {
+  PER_KG
+  PER_ITEM
+  FLAT
+}
+
+enum ShipmentStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+}
+
+enum BookingStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+  IN_TRANSIT
+  DELIVERED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+}
+
+enum PaymentTransactionStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  PAST_DUE
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  CANCELLED
+}
+
+enum SlotTrackingStatus {
+  PENDING
+  IN_TRANSIT
+  ARRIVED_AT_DESTINATION
+  DELAYED
+  DELIVERED
+}
+
+model User {
+  id                    String    @id @default(uuid())
+  email                 String    @unique
+  passwordHash          String
+  fullName              String
+  role                  UserRole  @default(CUSTOMER)
+  companyId             String?
+  company               Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  isEmailVerified       Boolean   @default(false)
+  emailVerificationToken String?  @unique
+  emailVerificationExpires DateTime?
+  passwordResetToken    String?   @unique
+  passwordResetExpires  DateTime?
+  // Customer profile fields
+  phoneNumber           String?
+  city                  String?
+  address               String?
+  country               String?
+  preferredShippingMode String?   // VAN, TRUCK, AIR, TRAIN, SHIP, RIDER
+  notificationEmail     Boolean   @default(true)
+  notificationSMS       Boolean   @default(false)
+  onboardingSteps       Json?     @default("{}") // Track onboarding progress: { stepName: { completed: boolean, completedAt?: DateTime } }
+  onboardingCompleted   Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relations
+  bookings       Booking[]
+  notifications  Notification[]
+  createdCompany Company? @relation("CompanyAdmin")
+  sentInvitations TeamInvitation[] @relation("InvitedBy")
+  acceptedInvitations TeamInvitation[] @relation("AcceptedBy")
+
+  @@index([email])
+  @@index([companyId])
+  @@index([emailVerificationToken])
+  @@index([passwordResetToken])
+  @@index([onboardingCompleted])
+}
+
+model Company {
+  id                  String       @id @default(uuid())
+  name                String
+  slug                String       @unique
+  description         String?
+  logoUrl             String?
+  website             String?
+  country             String
+  city                String
+  // Company contact fields
+  contactPhone        String?
+  contactEmail        String?
+  address             String?
+  state               String?
+  postalCode          String?
+  isVerified          Boolean      @default(false)
+  activePlanId        String?
+  activePlan          CompanyPlan? @relation(fields: [activePlanId], references: [id], onDelete: SetNull)
+  planExpiresAt       DateTime?
+  adminId             String?      @unique
+  admin               User?        @relation("CompanyAdmin", fields: [adminId], references: [id], onDelete: SetNull)
+  onboardingSteps     Json?        @default("{}") // Track onboarding progress: { stepName: { completed: boolean, completedAt?: DateTime } }
+  onboardingCompleted Boolean      @default(false)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  // Relations
+  staff         User[]
+  shipmentSlots ShipmentSlot[]
+  subscriptions Subscription[]
+  bookings      Booking[]      @relation("CompanyBookings")
+  invitations   TeamInvitation[]
+
+  @@index([slug])
+  @@index([isVerified])
+  @@index([onboardingCompleted])
+}
+
+model CompanyPlan {
+  id                   String    @id @default(uuid())
+  name                 String    @unique // "Basic", "Pro", "Enterprise"
+  priceMonthly         Decimal   @db.Decimal(10, 2)
+  maxActiveShipmentSlots Int?    // null means unlimited
+  maxTeamMembers       Int?      // null means unlimited
+  isDefault            Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  // Relations
+  companies    Company[]
+  subscriptions Subscription[]
+
+  @@index([isDefault])
+}
+
+model ShipmentSlot {
+  id                          String         @id @default(uuid())
+  companyId                   String
+  company                     Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  originCountry               String
+  originCity                  String
+  destinationCountry          String
+  destinationCity             String
+  departureTime               DateTime
+  arrivalTime                 DateTime
+  mode                        ShipmentMode
+  totalCapacityKg             Float?
+  totalCapacityItems          Int?
+  remainingCapacityKg         Float?
+  remainingCapacityItems      Int?
+  pricingModel                PricingModel
+  pricePerKg                  Decimal?       @db.Decimal(10, 2)
+  pricePerItem                Decimal?       @db.Decimal(10, 2)
+  flatPrice                   Decimal?       @db.Decimal(10, 2)
+  cutoffTimeForReceivingItems DateTime
+  status                      ShipmentStatus @default(DRAFT)
+  trackingStatus              SlotTrackingStatus @default(PENDING)
+  createdAt                   DateTime       @default(now())
+  updatedAt                   DateTime       @updatedAt
+
+  // Relations
+  bookings Booking[]
+
+  @@index([companyId])
+  @@index([originCountry, originCity])
+  @@index([destinationCountry, destinationCity])
+  @@index([departureTime])
+  @@index([status])
+}
+
+model Booking {
+  id                String        @id @default(uuid())
+  shipmentSlotId    String
+  shipmentSlot      ShipmentSlot  @relation(fields: [shipmentSlotId], references: [id], onDelete: Cascade)
+  customerId        String
+  customer          User          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  companyId         String        // Denormalized for easier querying
+  company           Company       @relation("CompanyBookings", fields: [companyId], references: [id], onDelete: Cascade)
+  requestedWeightKg Float?
+  requestedItemsCount Int?
+  calculatedPrice   Decimal       @db.Decimal(10, 2)
+  status            BookingStatus @default(PENDING)
+  paymentStatus     PaymentStatus @default(PENDING)
+  notes             String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  // Relations
+  payment Payment?
+
+  @@index([customerId])
+  @@index([companyId])
+  @@index([shipmentSlotId])
+  @@index([status])
+}
+
+model Payment {
+  id                   String                @id @default(uuid())
+  bookingId            String                @unique
+  booking              Booking               @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  stripePaymentIntentId String               @unique
+  stripeChargeId       String?
+  amount               Decimal               @db.Decimal(10, 2)
+  currency             String                @default("gbp")
+  status               PaymentTransactionStatus @default(PENDING)
+  paymentMethod        String?               // e.g., "card", "bank_transfer"
+  refundedAmount       Decimal?              @db.Decimal(10, 2) @default(0)
+  refundReason         String?
+  paidAt               DateTime?
+  refundedAt           DateTime?
+  metadata             Json?                 @default("{}")
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  @@index([stripePaymentIntentId])
+  @@index([status])
+  @@index([bookingId])
+  @@index([createdAt])
+}
+
+model Subscription {
+  id                  String             @id @default(uuid())
+  companyId           String
+  company             Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyPlanId       String
+  companyPlan         CompanyPlan        @relation(fields: [companyPlanId], references: [id], onDelete: Restrict)
+  stripeCustomerId    String
+  stripeSubscriptionId String            @unique
+  status              SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart  DateTime
+  currentPeriodEnd    DateTime
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@index([companyId])
+  @@index([stripeSubscriptionId])
+  @@index([status])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String
+  metadata  Json?    @default("{}")
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+  @@index([userId, type])
+  @@index([type])
+}
+
+model Contact {
+  id        String   @id @default(uuid())
+  name      String
+  email     String
+  subject   String
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([isRead])
+}
+
+model TeamInvitation {
+  id           String           @id @default(uuid())
+  companyId    String
+  company      Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  email        String
+  role         UserRole         // COMPANY_STAFF or COMPANY_ADMIN
+  invitedById  String
+  invitedBy    User             @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: Cascade)
+  token        String           @unique
+  status       InvitationStatus @default(PENDING)
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  acceptedById String?
+  acceptedBy   User?            @relation("AcceptedBy", fields: [acceptedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([companyId])
+  @@index([email])
+  @@index([token])
+  @@index([status])
+  @@index([expiresAt])
+}
+

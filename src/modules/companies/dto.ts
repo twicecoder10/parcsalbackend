@@ -1,0 +1,48 @@
+import { z } from 'zod';
+
+export const updateCompanySchema = z.object({
+  body: z.object({
+    name: z.string().min(1).optional(),
+    description: z.string().optional(),
+    country: z.string().min(1).optional(),
+    city: z.string().min(1).optional(),
+    website: z.string().url().optional().or(z.literal('')),
+    logoUrl: z.string().url().optional().or(z.literal('')),
+  }),
+});
+
+export const listCompaniesSchema = z.object({
+  query: z.object({
+    limit: z.string().optional(),
+    offset: z.string().optional(),
+    isVerified: z.string().optional(),
+  }),
+});
+
+export const verifyCompanySchema = z.object({
+  params: z.object({
+    id: z.string().uuid(),
+  }),
+  body: z.object({
+    isVerified: z.boolean(),
+  }),
+});
+
+export const completeCompanyOnboardingSchema = z.object({
+  body: z.object({
+    companyDescription: z.string().optional(),
+    companyWebsite: z.string().url().optional().or(z.literal('')),
+    companyLogoUrl: z.string().url().optional().or(z.literal('')),
+    contactPhone: z.string().min(1, 'Contact phone is required'),
+    contactEmail: z.string().email('Invalid email address').min(1, 'Contact email is required'),
+    address: z.string().optional(),
+    city: z.string().optional(),
+    state: z.string().optional(),
+    postalCode: z.string().optional(),
+  }),
+});
+
+export type UpdateCompanyDto = z.infer<typeof updateCompanySchema>['body'];
+export type VerifyCompanyDto = z.infer<typeof verifyCompanySchema>['body'];
+export type CompleteCompanyOnboardingDto = z.infer<typeof completeCompanyOnboardingSchema>['body'];
+

@@ -1,0 +1,12 @@
+{
+  "platformName": "Parcsal",
+  "supportEmail": "support@parcsal.com",
+  "commissionRate": 5,
+  "minCommission": 0,
+  "maxCommission": 100,
+  "autoVerifyCompanies": false,
+  "requireEmailVerification": true,
+  "allowCompanyRegistration": true,
+  "allowCustomerRegistration": true,
+  "maintenanceMode": false
+}
