@@ -223,6 +223,20 @@ export const subscriptionService = {
             new Date(subscription.current_period_end * 1000)
           );
         }
+
+        return { 
+          received: true, 
+          message: 'Subscription updated successfully',
+          eventType: event.type,
+          subscriptionId: dbSubscription.id
+        };
+      } else {
+        console.warn(`[Subscription Webhook] customer.subscription.updated: Subscription ${subscription.id} not found in database`);
+        return { 
+          received: true, 
+          message: 'Subscription updated event received but subscription not found in database',
+          eventType: event.type
+        };
       }
     }
 
@@ -234,6 +248,20 @@ export const subscriptionService = {
       if (dbSubscription) {
         await subscriptionRepository.updateStatus(dbSubscription.id, 'CANCELLED');
         await subscriptionRepository.updateCompanyPlan(dbSubscription.companyId, dbSubscription.companyPlanId, null);
+        
+        return { 
+          received: true, 
+          message: 'Subscription cancelled successfully',
+          eventType: event.type,
+          subscriptionId: dbSubscription.id
+        };
+      } else {
+        console.warn(`[Subscription Webhook] customer.subscription.deleted: Subscription ${subscription.id} not found in database`);
+        return { 
+          received: true, 
+          message: 'Subscription deleted event received but subscription not found in database',
+          eventType: event.type
+        };
       }
     }
 

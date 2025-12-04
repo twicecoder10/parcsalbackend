@@ -20,7 +20,7 @@ async function main() {
       priceMonthly: 29.99,
       maxActiveShipmentSlots: 10,
       maxTeamMembers: 3,
-      isDefault: true,
+      isDefault: false,
     },
   });
 
@@ -44,7 +44,7 @@ async function main() {
       priceMonthly: 299.99,
       maxActiveShipmentSlots: null, // unlimited
       maxTeamMembers: null, // unlimited
-      isDefault: false,
+      isDefault: true,
     },
   });
 
