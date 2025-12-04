@@ -205,10 +205,14 @@ export const subscriptionService = {
 
     // Handle subscription updated
     if (event.type === 'customer.subscription.updated') {
+      console.log(`[Subscription Webhook] Processing customer.subscription.updated event: ${event.id}`);
       const subscription = event.data.object as Stripe.Subscription;
+      console.log(`[Subscription Webhook] Subscription ID: ${subscription.id}, Status: ${subscription.status}`);
+      
       const dbSubscription = await subscriptionRepository.findByStripeSubscriptionId(subscription.id);
 
       if (dbSubscription) {
+        console.log(`[Subscription Webhook] Found subscription in database: ${dbSubscription.id}`);
         await subscriptionRepository.updateStatus(
           dbSubscription.id,
           subscription.status === 'active' ? 'ACTIVE' : subscription.status === 'past_due' ? 'PAST_DUE' : 'CANCELLED',
@@ -224,6 +228,7 @@ export const subscriptionService = {
           );
         }
 
+        console.log(`[Subscription Webhook] Subscription updated successfully: ${dbSubscription.id}`);
         return { 
           received: true, 
           message: 'Subscription updated successfully',
@@ -232,10 +237,14 @@ export const subscriptionService = {
         };
       } else {
         console.warn(`[Subscription Webhook] customer.subscription.updated: Subscription ${subscription.id} not found in database`);
+        // If subscription doesn't exist, it might be because checkout.session.completed hasn't been processed yet
+        // In this case, we should try to create it from the subscription data if we can find the company
+        // For now, return a message indicating it wasn't found
         return { 
           received: true, 
-          message: 'Subscription updated event received but subscription not found in database',
-          eventType: event.type
+          message: 'Subscription updated event received but subscription not found in database. It may be created when checkout.session.completed is processed.',
+          eventType: event.type,
+          subscriptionId: subscription.id
         };
       }
     }
@@ -267,7 +276,8 @@ export const subscriptionService = {
 
     // Return success for unhandled events (Stripe will retry if we return error)
     // Only handle the events we care about, ignore others
-    return { received: true, message: `Event ${event.type} received but not handled` };
+    console.log(`[Subscription Webhook] Unhandled event type: ${event.type}, Event ID: ${event.id}`);
+    return { received: true, message: `Event ${event.type} received but not handled`, eventType: event.type };
   },
 
   async getMySubscription(req: AuthRequest) {
