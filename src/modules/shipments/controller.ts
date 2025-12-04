@@ -100,7 +100,7 @@ export const shipmentController = {
   async getShipmentById(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
-      const shipment = await shipmentService.getShipmentById(id);
+      const shipment = await shipmentService.getShipmentById(id, req);
 
       res.status(200).json({
         status: 'success',

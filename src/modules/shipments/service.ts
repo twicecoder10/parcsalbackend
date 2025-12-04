@@ -380,7 +380,7 @@ export const shipmentService = {
     return createPaginatedResponse(shipments, total, pagination);
   },
 
-  async getShipmentById(id: string) {
+  async getShipmentById(id: string, req?: AuthRequest) {
     const shipment = await prisma.shipmentSlot.findUnique({
       where: { id },
       include: {
@@ -400,8 +400,12 @@ export const shipmentService = {
       throw new NotFoundError('Shipment not found');
     }
     
-    // Only allow access to shipments from verified companies
-    if (!shipment.company.isVerified) {
+    // If user is authenticated and is the company owner/admin, allow access even if unverified
+    const isCompanyOwner = req?.user?.companyId === shipment.companyId;
+    
+    // Only allow public access to shipments from verified companies
+    // Company owners can always view their own shipments
+    if (!shipment.company.isVerified && !isCompanyOwner) {
       throw new NotFoundError('Shipment not found');
     }
     
