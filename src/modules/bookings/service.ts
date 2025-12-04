@@ -66,6 +66,11 @@ export const bookingService = {
       throw new BadRequestError('Shipment slot is not available for booking');
     }
 
+    // Only allow bookings for verified companies
+    if (!shipmentSlot.company.isVerified) {
+      throw new BadRequestError('Shipment slot is not available for booking');
+    }
+
     // Validate capacity based on pricing model
     if (shipmentSlot.pricingModel === 'PER_KG') {
       if (!dto.requestedWeightKg || dto.requestedWeightKg <= 0) {

@@ -381,10 +381,30 @@ export const shipmentService = {
   },
 
   async getShipmentById(id: string) {
-    const shipment = await shipmentRepository.findById(id);
+    const shipment = await prisma.shipmentSlot.findUnique({
+      where: { id },
+      include: {
+        company: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            isVerified: true,
+            logoUrl: true,
+          },
+        },
+      },
+    });
+    
     if (!shipment) {
       throw new NotFoundError('Shipment not found');
     }
+    
+    // Only allow access to shipments from verified companies
+    if (!shipment.company.isVerified) {
+      throw new NotFoundError('Shipment not found');
+    }
+    
     return shipment;
   },
 

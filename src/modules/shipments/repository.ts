@@ -200,6 +200,9 @@ export const shipmentRepository = {
   ): Promise<{ shipments: ShipmentSlot[]; total: number }> {
     const where: any = {
       status: 'PUBLISHED', // Only show published shipments
+      company: {
+        isVerified: true, // Only show shipments from verified companies
+      },
     };
 
     if (filters.originCountry) {
