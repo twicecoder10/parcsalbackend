@@ -17,6 +17,7 @@ import contactRoutes from './modules/contact/routes';
 import onboardingRoutes from './modules/onboarding/routes';
 import customerRoutes from './modules/customer/routes';
 import notificationRoutes from './modules/notifications/routes';
+import { paymentController } from './modules/payments/controller';
 
 const app: Express = express();
 
@@ -29,6 +30,7 @@ app.use(cors({
 // Apply raw body parser for Stripe webhooks (must be before JSON parser)
 // This preserves the raw body buffer needed for signature verification
 app.use('/payments/webhooks/stripe', express.raw({ type: 'application/json' }));
+app.use('/webhook/stripe', express.raw({ type: 'application/json' })); // Alternative path for Stripe webhooks
 app.use('/subscriptions/webhooks/stripe-subscriptions', express.raw({ type: 'application/json' }));
 
 // JSON parser for all routes except webhooks
@@ -37,6 +39,7 @@ app.use((req, res, next) => {
   // Skip JSON parsing for webhook routes (they use raw body)
   if (
     req.path === '/payments/webhooks/stripe' ||
+    req.path === '/webhook/stripe' ||
     req.path === '/subscriptions/webhooks/stripe-subscriptions'
   ) {
     return next();
@@ -61,6 +64,9 @@ app.use('/companies/payments', companyPaymentRoutes);
 app.use('/shipments', shipmentRoutes); // Keep for backward compatibility
 app.use('/bookings', bookingRoutes); // Keep for backward compatibility
 app.use('/payments', paymentRoutes);
+// Webhook route at root level (for Stripe webhook configuration)
+// This handles /webhook/stripe (without 's' and without /payments prefix)
+app.post('/webhook/stripe', paymentController.handleWebhook);
 app.use('/subscriptions', subscriptionRoutes);
 app.use('/companies/subscription', subscriptionRoutes); // Company admin subscription routes (GET /, POST /cancel, PUT /payment-method)
 app.use('/admin', adminRoutes);
