@@ -477,12 +477,132 @@ export const paymentService = {
       console.log(`[Payment Webhook] checkout.session.completed - Session ID: ${session.id}`);
       console.log(`[Payment Webhook] Has subscription: ${!!session.subscription}, Has payment_intent: ${!!session.payment_intent}`);
       
-      // Only process if this is a payment checkout (has payment_intent, not subscription)
+      // Check if this is a subscription checkout
       const subscriptionId = session.subscription as string;
       if (subscriptionId) {
-        // This is a subscription checkout, not a payment - ignore it
-        console.log(`[Payment Webhook] Ignoring subscription checkout`);
-        return { received: true, message: 'Not a payment checkout - this is a subscription', eventType: event.type };
+        // This is a subscription checkout - handle it here since it was sent to payment webhook
+        console.log(`[Payment Webhook] Detected subscription checkout, processing in payment webhook`);
+        try {
+          const companyId = session.metadata?.companyId || session.client_reference_id;
+          const planId = session.metadata?.planId;
+
+          if (!companyId || !planId) {
+            console.error(`[Payment Webhook] Company ID or Plan ID not found in subscription checkout metadata`);
+            return { received: true, message: 'Subscription checkout received but Company ID or Plan ID not found', eventType: event.type };
+          }
+
+          // Import subscription service to handle the subscription creation
+          const { subscriptionRepository } = await import('../subscriptions/repository');
+          const { onboardingRepository } = await import('../onboarding/repository');
+          
+          // Check if subscription already exists
+          const existingSubscription = await subscriptionRepository.findByStripeSubscriptionId(subscriptionId);
+          if (existingSubscription) {
+            console.log(`[Payment Webhook] Subscription ${subscriptionId} already exists, updating onboarding if needed`);
+            // Update onboarding even if subscription exists (in case it wasn't updated before)
+            try {
+              await onboardingRepository.updateCompanyOnboardingStep(companyId, 'payment_setup', true);
+              console.log(`[Payment Webhook] Updated onboarding step for company ${companyId}`);
+            } catch (onboardingErr: any) {
+              console.error(`[Payment Webhook] Failed to update onboarding:`, onboardingErr.message);
+            }
+            return { received: true, message: 'Subscription already exists', eventType: event.type, subscriptionId };
+          }
+
+          // Retrieve subscription from Stripe
+          const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+          const customerId = subscription.customer as string;
+
+          // Get plan
+          const plan = await prisma.companyPlan.findUnique({
+            where: { id: planId },
+          });
+
+          if (!plan) {
+            console.error(`[Payment Webhook] Plan ${planId} not found`);
+            return { received: true, message: 'Plan not found', eventType: event.type };
+          }
+
+          // Create subscription record
+          const subscriptionData = {
+            companyId,
+            companyPlanId: planId,
+            stripeCustomerId: customerId,
+            stripeSubscriptionId: subscriptionId,
+            status: 'ACTIVE' as const,
+            currentPeriodStart: new Date(subscription.current_period_start * 1000),
+            currentPeriodEnd: new Date(subscription.current_period_end * 1000),
+          };
+
+          const created = await subscriptionRepository.create(subscriptionData);
+          await subscriptionRepository.updateCompanyPlan(
+            companyId,
+            planId,
+            new Date(subscription.current_period_end * 1000)
+          );
+
+          // Mark payment_setup onboarding step as complete
+          let onboardingUpdated = false;
+          try {
+            console.log(`[Payment Webhook] Updating onboarding step 'payment_setup' for company ${companyId}`);
+            await onboardingRepository.updateCompanyOnboardingStep(companyId, 'payment_setup', true);
+            onboardingUpdated = true;
+            console.log(`[Payment Webhook] Successfully updated onboarding step for company ${companyId}`);
+          } catch (err: any) {
+            console.error(`[Payment Webhook] Failed to update onboarding step:`, {
+              error: err.message,
+              stack: err.stack,
+              companyId,
+            });
+            // Retry once
+            try {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              await onboardingRepository.updateCompanyOnboardingStep(companyId, 'payment_setup', true);
+              onboardingUpdated = true;
+              console.log(`[Payment Webhook] Successfully updated onboarding step on retry for company ${companyId}`);
+            } catch (retryErr: any) {
+              console.error(`[Payment Webhook] Retry also failed:`, retryErr.message);
+            }
+          }
+
+          // Trigger user onboarding recalculation
+          const company = await prisma.company.findUnique({
+            where: { id: companyId },
+            select: { adminId: true },
+          });
+
+          if (company?.adminId) {
+            try {
+              await onboardingRepository.updateUserOnboardingStep(company.adminId, 'profile_completion', true);
+              console.log(`[Payment Webhook] Successfully updated user onboarding for admin ${company.adminId}`);
+            } catch (err: any) {
+              console.error(`[Payment Webhook] Failed to update user onboarding:`, err.message);
+            }
+          }
+
+          console.log(`[Payment Webhook] Subscription created successfully: ${created.id}`);
+          return { 
+            received: true, 
+            message: 'Subscription checkout processed successfully',
+            eventType: event.type,
+            subscriptionId: created.id,
+            onboardingUpdated
+          };
+        } catch (err: any) {
+          console.error(`[Payment Webhook] Error processing subscription checkout:`, {
+            error: err.message,
+            stack: err.stack,
+            sessionId: session.id,
+          });
+          // Don't throw - return success to prevent Stripe retries
+          // The subscription webhook should handle it if configured
+          return { 
+            received: true, 
+            message: `Subscription checkout received but processing failed: ${err.message}`,
+            eventType: event.type,
+            error: err.message
+          };
+        }
       }
 
       const bookingId = session.metadata?.bookingId || session.client_reference_id;
@@ -802,6 +922,109 @@ export const paymentService = {
     if (event.type === 'payment_intent.created') {
       console.log(`[Payment Webhook] payment_intent.created - PaymentIntent ID: ${(event.data.object as Stripe.PaymentIntent).id}`);
       return { received: true, message: 'Payment intent created - no action needed', eventType: event.type };
+    }
+
+    // Handle subscription-related events that are sent to payment webhook
+    // This handles cases where Stripe sends subscription events to the payment webhook endpoint
+    const subscriptionEventTypes = [
+      'customer.subscription.created',
+      'customer.subscription.updated',
+      'customer.subscription.deleted',
+    ];
+    
+    if (subscriptionEventTypes.includes(event.type)) {
+      console.log(`[Payment Webhook] Detected subscription event ${event.type}, handling in payment webhook`);
+      try {
+        // Process the subscription event directly
+        // Since the event is already verified with payment secret, we'll process it
+        if (event.type === 'customer.subscription.updated') {
+          const subscription = event.data.object as Stripe.Subscription;
+          console.log(`[Payment Webhook] Processing customer.subscription.updated for subscription ${subscription.id}`);
+          
+          // Import subscription repository to handle the update
+          const { subscriptionRepository } = await import('../subscriptions/repository');
+          const { onboardingRepository } = await import('../onboarding/repository');
+          
+          const dbSubscription = await subscriptionRepository.findByStripeSubscriptionId(subscription.id);
+          
+          if (dbSubscription) {
+            await subscriptionRepository.updateStatus(
+              dbSubscription.id,
+              subscription.status === 'active' ? 'ACTIVE' : subscription.status === 'past_due' ? 'PAST_DUE' : 'CANCELLED',
+              new Date(subscription.current_period_start * 1000),
+              new Date(subscription.current_period_end * 1000)
+            );
+
+            if (subscription.status === 'active') {
+              await subscriptionRepository.updateCompanyPlan(
+                dbSubscription.companyId,
+                dbSubscription.companyPlanId,
+                new Date(subscription.current_period_end * 1000)
+              );
+              
+              // Update onboarding if subscription becomes active
+              try {
+                await onboardingRepository.updateCompanyOnboardingStep(
+                  dbSubscription.companyId,
+                  'payment_setup',
+                  true
+                );
+                console.log(`[Payment Webhook] Updated onboarding step for company ${dbSubscription.companyId}`);
+              } catch (onboardingErr: any) {
+                console.error(`[Payment Webhook] Failed to update onboarding:`, onboardingErr.message);
+                // Retry once
+                try {
+                  await new Promise(resolve => setTimeout(resolve, 1000));
+                  await onboardingRepository.updateCompanyOnboardingStep(
+                    dbSubscription.companyId,
+                    'payment_setup',
+                    true
+                  );
+                  console.log(`[Payment Webhook] Successfully updated onboarding on retry for company ${dbSubscription.companyId}`);
+                } catch (retryErr: any) {
+                  console.error(`[Payment Webhook] Retry also failed:`, retryErr.message);
+                }
+              }
+            }
+
+            console.log(`[Payment Webhook] Subscription updated successfully: ${dbSubscription.id}`);
+            return { 
+              received: true, 
+              message: 'Subscription updated successfully',
+              eventType: event.type,
+              subscriptionId: dbSubscription.id
+            };
+          } else {
+            console.warn(`[Payment Webhook] Subscription ${subscription.id} not found in database`);
+            return { 
+              received: true, 
+              message: 'Subscription updated event received but subscription not found in database',
+              eventType: event.type,
+              subscriptionId: subscription.id
+            };
+          }
+        }
+        
+        // For other subscription event types, just acknowledge
+        return { 
+          received: true, 
+          message: `Subscription event ${event.type} received and acknowledged`,
+          eventType: event.type
+        };
+      } catch (err: any) {
+        console.error(`[Payment Webhook] Error handling subscription event:`, {
+          error: err.message,
+          stack: err.stack,
+          eventType: event.type,
+        });
+        // Return success to prevent Stripe retries
+        return { 
+          received: true, 
+          message: `Subscription event ${event.type} received but processing failed`,
+          eventType: event.type,
+          error: err.message
+        };
+      }
     }
 
     // Return success for unhandled events (Stripe will retry if we return error)
