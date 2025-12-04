@@ -400,12 +400,13 @@ export const shipmentService = {
       throw new NotFoundError('Shipment not found');
     }
     
-    // If user is authenticated and is the company owner/admin, allow access even if unverified
-    const isCompanyOwner = req?.user?.companyId === shipment.companyId;
+    // If user is authenticated and is a company user (admin/staff), skip verification check
+    // This endpoint is used by companies to view their own shipments
+    const isCompanyUser = req?.user?.companyId === shipment.companyId && 
+                         req?.user?.role && 
+                         ['COMPANY_ADMIN', 'COMPANY_STAFF', 'SUPER_ADMIN'].includes(req.user.role);
     
-    // Only allow public access to shipments from verified companies
-    // Company owners can always view their own shipments
-    if (!shipment.company.isVerified && !isCompanyOwner) {
+    if (!isCompanyUser) {
       throw new NotFoundError('Shipment not found');
     }
     
