@@ -174,14 +174,43 @@ export const subscriptionService = {
       );
 
       // Mark payment_setup onboarding step as complete
-      await onboardingRepository.updateCompanyOnboardingStep(
-        companyId,
-        'payment_setup',
-        true
-      ).catch((err) => {
-        // Don't fail the subscription creation if onboarding update fails
-        console.error('Failed to update onboarding step:', err);
-      });
+      let onboardingUpdated = false;
+      try {
+        console.log(`[Subscription Webhook] Updating onboarding step 'payment_setup' for company ${companyId}`);
+        await onboardingRepository.updateCompanyOnboardingStep(
+          companyId,
+          'payment_setup',
+          true
+        );
+        onboardingUpdated = true;
+        console.log(`[Subscription Webhook] Successfully updated onboarding step 'payment_setup' for company ${companyId}`);
+      } catch (err: any) {
+        // Don't fail the subscription creation if onboarding update fails, but log it clearly
+        console.error(`[Subscription Webhook] CRITICAL: Failed to update onboarding step 'payment_setup' for company ${companyId}:`, {
+          error: err.message,
+          stack: err.stack,
+          companyId,
+          subscriptionId: created.id,
+        });
+        // Try one more time after a short delay
+        try {
+          console.log(`[Subscription Webhook] Retrying onboarding update for company ${companyId}`);
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+          await onboardingRepository.updateCompanyOnboardingStep(
+            companyId,
+            'payment_setup',
+            true
+          );
+          onboardingUpdated = true;
+          console.log(`[Subscription Webhook] Successfully updated onboarding step on retry for company ${companyId}`);
+        } catch (retryErr: any) {
+          console.error(`[Subscription Webhook] CRITICAL: Retry also failed for onboarding update:`, {
+            error: retryErr.message,
+            stack: retryErr.stack,
+            companyId,
+          });
+        }
+      }
 
       // Trigger user onboarding recalculation to update onboardingCompleted flag
       const company = await prisma.company.findUnique({
@@ -190,17 +219,30 @@ export const subscriptionService = {
       });
 
       if (company?.adminId) {
-        // Trigger recalculation by updating a user step (idempotent)
-        await onboardingRepository.updateUserOnboardingStep(
-          company.adminId,
-          'profile_completion',
-          true
-        ).catch((err) => {
-          console.error('Failed to update user onboarding:', err);
-        });
+        try {
+          // Trigger recalculation by updating a user step (idempotent)
+          await onboardingRepository.updateUserOnboardingStep(
+            company.adminId,
+            'profile_completion',
+            true
+          );
+          console.log(`[Subscription Webhook] Successfully updated user onboarding for admin ${company.adminId}`);
+        } catch (err: any) {
+          console.error(`[Subscription Webhook] Failed to update user onboarding:`, {
+            error: err.message,
+            stack: err.stack,
+            adminId: company.adminId,
+          });
+        }
       }
 
-      return { subscription: created };
+      return { 
+        subscription: created,
+        onboardingUpdated,
+        message: onboardingUpdated 
+          ? 'Subscription created and onboarding updated successfully' 
+          : 'Subscription created but onboarding update failed - check logs'
+      };
     }
 
     // Handle subscription updated
@@ -299,7 +341,7 @@ export const subscriptionService = {
     return subscription;
   },
 
-  async syncSubscriptionFromStripe(req: AuthRequest, sessionId: string) {
+  async syncSubscriptionFromStripe(req: AuthRequest, sessionId: string, updateOnboarding: boolean = true) {
     if (!req.user || !req.user.companyId) {
       throw new ForbiddenError('User must be associated with a company');
     }
@@ -326,25 +368,55 @@ export const subscriptionService = {
     // Check if subscription already exists
     const existingSubscription = await subscriptionRepository.findByStripeSubscriptionId(subscriptionId);
     if (existingSubscription) {
-      // Still trigger user onboarding recalculation in case it wasn't done before
-      const company = await prisma.company.findUnique({
-        where: { id: companyId },
-        select: { adminId: true },
-      });
+      let onboardingUpdated = false;
+      
+      // Update onboarding step if requested and not already completed
+      if (updateOnboarding) {
+        try {
+          const company = await prisma.company.findUnique({
+            where: { id: companyId },
+            select: { onboardingSteps: true, adminId: true },
+          });
 
-      if (company?.adminId) {
-        await onboardingRepository.updateUserOnboardingStep(
-          company.adminId,
-          'profile_completion',
-          true
-        ).catch((err) => {
-          console.error('Failed to update user onboarding:', err);
-        });
+          if (company) {
+            const steps = (company.onboardingSteps as any) || {};
+            if (!steps.payment_setup?.completed) {
+              console.log(`[Sync Subscription] Updating onboarding step 'payment_setup' for company ${companyId}`);
+              await onboardingRepository.updateCompanyOnboardingStep(
+                companyId,
+                'payment_setup',
+                true
+              );
+              onboardingUpdated = true;
+              console.log(`[Sync Subscription] Successfully updated onboarding step for company ${companyId}`);
+            } else {
+              console.log(`[Sync Subscription] Onboarding step 'payment_setup' already completed for company ${companyId}`);
+            }
+
+            // Trigger user onboarding recalculation
+            if (company.adminId) {
+              await onboardingRepository.updateUserOnboardingStep(
+                company.adminId,
+                'profile_completion',
+                true
+              ).catch((err) => {
+                console.error('Failed to update user onboarding:', err);
+              });
+            }
+          }
+        } catch (err: any) {
+          console.error(`[Sync Subscription] Failed to update onboarding:`, {
+            error: err.message,
+            stack: err.stack,
+            companyId,
+          });
+        }
       }
 
       return {
         message: 'Subscription already exists in database',
         subscription: existingSubscription,
+        onboardingUpdated,
       };
     }
     const planId = session.metadata?.planId;
@@ -390,13 +462,38 @@ export const subscriptionService = {
     );
 
     // Mark payment_setup onboarding step as complete
-    await onboardingRepository.updateCompanyOnboardingStep(
-      companyId,
-      'payment_setup',
-      true
-    ).catch((err) => {
-      console.error('Failed to update onboarding step:', err);
-    });
+    let onboardingUpdated = false;
+    if (updateOnboarding) {
+      try {
+        console.log(`[Sync Subscription] Updating onboarding step 'payment_setup' for company ${companyId}`);
+        await onboardingRepository.updateCompanyOnboardingStep(
+          companyId,
+          'payment_setup',
+          true
+        );
+        onboardingUpdated = true;
+        console.log(`[Sync Subscription] Successfully updated onboarding step for company ${companyId}`);
+      } catch (err: any) {
+        console.error(`[Sync Subscription] Failed to update onboarding step:`, {
+          error: err.message,
+          stack: err.stack,
+          companyId,
+        });
+        // Try one more time after a short delay
+        try {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          await onboardingRepository.updateCompanyOnboardingStep(
+            companyId,
+            'payment_setup',
+            true
+          );
+          onboardingUpdated = true;
+          console.log(`[Sync Subscription] Successfully updated onboarding step on retry for company ${companyId}`);
+        } catch (retryErr: any) {
+          console.error(`[Sync Subscription] Retry also failed:`, retryErr.message);
+        }
+      }
+    }
 
     // Trigger user onboarding recalculation to update onboardingCompleted flag
     // Get the company admin user to update their onboarding status
@@ -417,10 +514,11 @@ export const subscriptionService = {
       });
     }
 
-    return {
-      message: 'Subscription synced successfully',
-      subscription: created,
-    };
+      return {
+        message: 'Subscription synced successfully',
+        subscription: created,
+        onboardingUpdated,
+      };
   },
 
   async cancelSubscription(req: AuthRequest, _reason?: string) {
