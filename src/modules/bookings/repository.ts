@@ -14,6 +14,34 @@ export interface CreateBookingData {
   notes?: string | null;
   status: BookingStatus;
   paymentStatus: 'PENDING' | 'PAID' | 'REFUNDED';
+  // New parcel information fields
+  parcelType?: 'DOCUMENT' | 'PACKAGE' | 'FRAGILE' | 'ELECTRONICS' | 'CLOTHING' | 'FOOD' | 'MEDICINE' | 'OTHER' | null;
+  weight?: number | null;
+  value?: Decimal | null;
+  length?: number | null;
+  width?: number | null;
+  height?: number | null;
+  description?: string | null;
+  images?: string[];
+  pickupMethod: 'PICKUP_FROM_SENDER' | 'DROP_OFF_AT_COMPANY';
+  deliveryMethod: 'RECEIVER_PICKS_UP' | 'DELIVERED_TO_RECEIVER';
+  // Address fields
+  pickupAddress?: string | null;
+  pickupCity?: string | null;
+  pickupState?: string | null;
+  pickupCountry?: string | null;
+  pickupPostalCode?: string | null;
+  pickupContactName?: string | null;
+  pickupContactPhone?: string | null;
+  pickupWarehouseId?: string | null;
+  deliveryAddress?: string | null;
+  deliveryCity?: string | null;
+  deliveryState?: string | null;
+  deliveryCountry?: string | null;
+  deliveryPostalCode?: string | null;
+  deliveryContactName?: string | null;
+  deliveryContactPhone?: string | null;
+  deliveryWarehouseId?: string | null;
 }
 
 export const bookingRepository = {
@@ -281,6 +309,61 @@ export const bookingRepository = {
     });
 
     return { count: result.count };
+  },
+
+  async addProofImages(
+    id: string,
+    pickupProofImages: string[],
+    deliveryProofImages: string[]
+  ): Promise<Booking> {
+    const booking = await prisma.booking.findUnique({
+      where: { id },
+      select: { pickupProofImages: true, deliveryProofImages: true },
+    });
+
+    if (!booking) {
+      throw new Error('Booking not found');
+    }
+
+    // Append new images to existing ones
+    const updatedPickupProofImages = [
+      ...(booking.pickupProofImages || []),
+      ...pickupProofImages,
+    ];
+    const updatedDeliveryProofImages = [
+      ...(booking.deliveryProofImages || []),
+      ...deliveryProofImages,
+    ];
+
+    return prisma.booking.update({
+      where: { id },
+      data: {
+        pickupProofImages: updatedPickupProofImages,
+        deliveryProofImages: updatedDeliveryProofImages,
+      },
+      include: {
+        shipmentSlot: {
+          include: {
+            company: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                isVerified: true,
+              },
+            },
+          },
+        },
+        customer: {
+          select: {
+            id: true,
+            email: true,
+            fullName: true,
+          },
+        },
+        payment: true,
+      },
+    });
   },
 };
 

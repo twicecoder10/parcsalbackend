@@ -1,5 +1,5 @@
 import { companyRepository, UpdateCompanyData } from './repository';
-import { UpdateCompanyDto, CompleteCompanyOnboardingDto } from './dto';
+import { UpdateCompanyDto, CompleteCompanyOnboardingDto, CreateWarehouseAddressDto, UpdateWarehouseAddressDto } from './dto';
 import { NotFoundError, ForbiddenError, BadRequestError } from '../../utils/errors';
 import { AuthRequest } from '../../middleware/auth';
 import { parsePagination, createPaginatedResponse } from '../../utils/pagination';
@@ -8,7 +8,9 @@ import prisma from '../../config/database';
 import { invitationRepository } from './invitation-repository';
 import { emailService } from '../../config/email';
 import { config } from '../../config/env';
+import { deleteImageByUrl } from '../../utils/upload';
 import { createNotification, createCompanyNotification } from '../../utils/notifications';
+import { reviewRepository } from '../reviews/repository';
 
 export const companyService = {
   async getMyCompany(req: AuthRequest) {
@@ -34,13 +36,31 @@ export const companyService = {
       throw new ForbiddenError('Only company admins can update company profile');
     }
 
+    // Get current company to check for old logo
+    const currentCompany = await companyRepository.findById(req.user.companyId);
+    if (!currentCompany) {
+      throw new NotFoundError('Company not found');
+    }
+
     const updateData: UpdateCompanyData = {};
     if (dto.name !== undefined) updateData.name = dto.name;
     if (dto.description !== undefined) updateData.description = dto.description || null;
     if (dto.country !== undefined) updateData.country = dto.country;
     if (dto.city !== undefined) updateData.city = dto.city;
     if (dto.website !== undefined) updateData.website = dto.website || null;
-    if (dto.logoUrl !== undefined) updateData.logoUrl = dto.logoUrl || null;
+    
+    // Handle logo update and cleanup old logo
+    if (dto.logoUrl !== undefined) {
+      updateData.logoUrl = dto.logoUrl || null;
+      
+      // If logo is being updated and old logo exists, delete the old one
+      if (currentCompany.logoUrl && currentCompany.logoUrl !== dto.logoUrl) {
+        const companyId = req.user.companyId;
+        deleteImageByUrl(currentCompany.logoUrl).catch((err) => {
+          console.error(`Failed to cleanup old logo for company ${companyId}:`, err);
+        });
+      }
+    }
 
     const company = await companyRepository.update(req.user.companyId, updateData);
     
@@ -989,6 +1009,250 @@ export const companyService = {
         bookingUpdates: settings.notifications?.bookingUpdates ?? true,
         shipmentUpdates: settings.notifications?.shipmentUpdates ?? true,
       },
+    };
+  },
+
+  // Warehouse Addresses
+  async createWarehouseAddress(req: AuthRequest, dto: CreateWarehouseAddressDto) {
+    if (!req.user || !req.user.companyId) {
+      throw new ForbiddenError('User must be associated with a company');
+    }
+
+    // Check if user has permission (company admin or super admin)
+    if (req.user.role !== 'COMPANY_ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenError('Only company admins can add warehouse addresses');
+    }
+
+    const companyId = req.user.companyId;
+
+    // If this is set as default, unset other default addresses
+    if (dto.isDefault) {
+      await prisma.warehouseAddress.updateMany({
+        where: {
+          companyId,
+          isDefault: true,
+        },
+        data: {
+          isDefault: false,
+        },
+      });
+    }
+
+    const warehouseAddress = await prisma.warehouseAddress.create({
+      data: {
+        companyId,
+        name: dto.name,
+        address: dto.address,
+        city: dto.city,
+        state: dto.state || null,
+        country: dto.country,
+        postalCode: dto.postalCode || null,
+        isDefault: dto.isDefault || false,
+      },
+    });
+
+    return warehouseAddress;
+  },
+
+  async listWarehouseAddresses(req: AuthRequest) {
+    if (!req.user || !req.user.companyId) {
+      throw new ForbiddenError('User must be associated with a company');
+    }
+
+    const warehouseAddresses = await prisma.warehouseAddress.findMany({
+      where: {
+        companyId: req.user.companyId,
+      },
+      orderBy: [
+        { isDefault: 'desc' },
+        { createdAt: 'desc' },
+      ],
+    });
+
+    return warehouseAddresses;
+  },
+
+  async updateWarehouseAddress(req: AuthRequest, warehouseId: string, dto: UpdateWarehouseAddressDto) {
+    if (!req.user || !req.user.companyId) {
+      throw new ForbiddenError('User must be associated with a company');
+    }
+
+    // Check if user has permission (company admin or super admin)
+    if (req.user.role !== 'COMPANY_ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenError('Only company admins can update warehouse addresses');
+    }
+
+    const companyId = req.user.companyId;
+
+    // Verify the warehouse address belongs to the company
+    const existingWarehouse = await prisma.warehouseAddress.findUnique({
+      where: { id: warehouseId },
+    });
+
+    if (!existingWarehouse) {
+      throw new NotFoundError('Warehouse address not found');
+    }
+
+    if (existingWarehouse.companyId !== companyId) {
+      throw new ForbiddenError('You do not have permission to update this warehouse address');
+    }
+
+    // If setting this as default, unset other default addresses
+    if (dto.isDefault === true) {
+      await prisma.warehouseAddress.updateMany({
+        where: {
+          companyId,
+          isDefault: true,
+          id: { not: warehouseId },
+        },
+        data: {
+          isDefault: false,
+        },
+      });
+    }
+
+    const updateData: any = {};
+    if (dto.name !== undefined) updateData.name = dto.name;
+    if (dto.address !== undefined) updateData.address = dto.address;
+    if (dto.city !== undefined) updateData.city = dto.city;
+    if (dto.state !== undefined) updateData.state = dto.state || null;
+    if (dto.country !== undefined) updateData.country = dto.country;
+    if (dto.postalCode !== undefined) updateData.postalCode = dto.postalCode || null;
+    if (dto.isDefault !== undefined) updateData.isDefault = dto.isDefault;
+
+    const warehouseAddress = await prisma.warehouseAddress.update({
+      where: { id: warehouseId },
+      data: updateData,
+    });
+
+    return warehouseAddress;
+  },
+
+  async deleteWarehouseAddress(req: AuthRequest, warehouseId: string) {
+    if (!req.user || !req.user.companyId) {
+      throw new ForbiddenError('User must be associated with a company');
+    }
+
+    // Check if user has permission (company admin or super admin)
+    if (req.user.role !== 'COMPANY_ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenError('Only company admins can delete warehouse addresses');
+    }
+
+    const companyId = req.user.companyId;
+
+    // Verify the warehouse address belongs to the company
+    const existingWarehouse = await prisma.warehouseAddress.findUnique({
+      where: { id: warehouseId },
+    });
+
+    if (!existingWarehouse) {
+      throw new NotFoundError('Warehouse address not found');
+    }
+
+    if (existingWarehouse.companyId !== companyId) {
+      throw new ForbiddenError('You do not have permission to delete this warehouse address');
+    }
+
+    await prisma.warehouseAddress.delete({
+      where: { id: warehouseId },
+    });
+
+    return { message: 'Warehouse address deleted successfully' };
+  },
+
+  // Public method to get warehouse addresses by company ID or slug
+  async getCompanyWarehouseAddresses(companyIdOrSlug: string) {
+    // Try to find company by ID or slug
+    const company = await prisma.company.findFirst({
+      where: {
+        OR: [
+          { id: companyIdOrSlug },
+          { slug: companyIdOrSlug },
+        ],
+      },
+      select: {
+        id: true,
+        isVerified: true,
+      },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
+    // Only show warehouse addresses for verified companies
+    if (!company.isVerified) {
+      throw new ForbiddenError('Company warehouse addresses are not available');
+    }
+
+    const warehouseAddresses = await prisma.warehouseAddress.findMany({
+      where: {
+        companyId: company.id,
+      },
+      select: {
+        id: true,
+        name: true,
+        address: true,
+        city: true,
+        state: true,
+        country: true,
+        postalCode: true,
+        isDefault: true,
+      },
+      orderBy: [
+        { isDefault: 'desc' },
+        { createdAt: 'desc' },
+      ],
+    });
+
+    return warehouseAddresses;
+  },
+
+  // Public method to get company profile with limited info
+  async getPublicCompanyProfile(companyIdOrSlug: string) {
+    // Try to find company by ID or slug
+    const company = await prisma.company.findFirst({
+      where: {
+        OR: [
+          { id: companyIdOrSlug },
+          { slug: companyIdOrSlug },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        logoUrl: true,
+        website: true,
+        country: true,
+        city: true,
+        isVerified: true,
+      },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
+    // Get average rating and review count
+    const [averageRating, reviewCount] = await Promise.all([
+      reviewRepository.getCompanyAverageRating(company.id),
+      reviewRepository.getCompanyReviewCount(company.id),
+    ]);
+
+    return {
+      id: company.id,
+      name: company.name,
+      slug: company.slug,
+      description: company.description,
+      logoUrl: company.logoUrl,
+      website: company.website,
+      country: company.country,
+      city: company.city,
+      isVerified: company.isVerified,
+      rating: averageRating !== null ? Number(Number(averageRating).toFixed(1)) : null,
+      reviewCount,
     };
   },
 };

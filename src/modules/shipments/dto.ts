@@ -76,6 +76,8 @@ export const searchShipmentsSchema = z.object({
     mode: shipmentModeEnum.optional(),
     dateFrom: z.string().datetime().optional(),
     dateTo: z.string().datetime().optional(),
+    arrivalFrom: z.string().datetime().optional(),
+    arrivalTo: z.string().datetime().optional(),
     minPrice: z.string().optional(),
     maxPrice: z.string().optional(),
     limit: z.string().optional(),

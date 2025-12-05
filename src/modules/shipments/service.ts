@@ -8,6 +8,7 @@ import { onboardingRepository } from '../onboarding/repository';
 import { bookingRepository } from '../bookings/repository';
 import { BookingStatus } from '@prisma/client';
 import { createShipmentCustomerNotifications } from '../../utils/notifications';
+import { emailService } from '../../config/email';
 
 export const shipmentService = {
   async createShipment(req: AuthRequest, dto: CreateShipmentDto) {
@@ -375,6 +376,141 @@ export const shipmentService = {
       ).catch((err) => {
         console.error('Failed to create tracking update notifications:', err);
       });
+
+      // Send emails for DELAYED status
+      if (dto.trackingStatus === 'DELAYED') {
+        // Get all bookings for this slot that are eligible for delay notification
+        const bookings = await prisma.booking.findMany({
+          where: {
+            shipmentSlotId: id,
+            status: {
+              in: ['PENDING', 'ACCEPTED', 'IN_TRANSIT'],
+            },
+          },
+          include: {
+            customer: {
+              select: {
+                id: true,
+                email: true,
+                fullName: true,
+                notificationEmail: true,
+              },
+            },
+            shipmentSlot: {
+              select: {
+                originCity: true,
+                originCountry: true,
+                destinationCity: true,
+                destinationCountry: true,
+                departureTime: true,
+                arrivalTime: true,
+                mode: true,
+              },
+            },
+            company: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        });
+
+        // Send delayed email to each customer
+        await Promise.all(
+          bookings.map(async (booking) => {
+            if (booking.customer.notificationEmail) {
+              try {
+                await emailService.sendBookingDelayedEmail(
+                  booking.customer.email,
+                  booking.customer.fullName,
+                  booking.id,
+                  {
+                    originCity: booking.shipmentSlot.originCity,
+                    originCountry: booking.shipmentSlot.originCountry,
+                    destinationCity: booking.shipmentSlot.destinationCity,
+                    destinationCountry: booking.shipmentSlot.destinationCountry,
+                    departureTime: booking.shipmentSlot.departureTime,
+                    arrivalTime: booking.shipmentSlot.arrivalTime,
+                    mode: booking.shipmentSlot.mode,
+                    price: Number(booking.calculatedPrice),
+                    currency: 'gbp',
+                  },
+                  booking.company.name
+                );
+              } catch (err) {
+                console.error(`Failed to send delayed email for booking ${booking.id}:`, err);
+              }
+            }
+          })
+        );
+      }
+
+      // Send emails for DELIVERED status (when slot tracking is delivered, bookings are bulk updated)
+      if (dto.trackingStatus === 'DELIVERED') {
+        // Get all bookings that were just updated to DELIVERED
+        // We need to get bookings that were IN_TRANSIT before the bulk update
+        const bookings = await prisma.booking.findMany({
+          where: {
+            shipmentSlotId: id,
+            status: 'DELIVERED',
+          },
+          include: {
+            customer: {
+              select: {
+                id: true,
+                email: true,
+                fullName: true,
+                notificationEmail: true,
+              },
+            },
+            shipmentSlot: {
+              select: {
+                originCity: true,
+                originCountry: true,
+                destinationCity: true,
+                destinationCountry: true,
+                departureTime: true,
+                arrivalTime: true,
+                mode: true,
+              },
+            },
+            company: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        });
+
+        // Send delivered email to each customer
+        await Promise.all(
+          bookings.map(async (booking) => {
+            if (booking.customer.notificationEmail) {
+              try {
+                await emailService.sendBookingDeliveredEmail(
+                  booking.customer.email,
+                  booking.customer.fullName,
+                  booking.id,
+                  {
+                    originCity: booking.shipmentSlot.originCity,
+                    originCountry: booking.shipmentSlot.originCountry,
+                    destinationCity: booking.shipmentSlot.destinationCity,
+                    destinationCountry: booking.shipmentSlot.destinationCountry,
+                    departureTime: booking.shipmentSlot.departureTime,
+                    arrivalTime: booking.shipmentSlot.arrivalTime,
+                    mode: booking.shipmentSlot.mode,
+                    price: Number(booking.calculatedPrice),
+                    currency: 'gbp',
+                  },
+                  booking.company.name
+                );
+              } catch (err) {
+                console.error(`Failed to send delivered email for booking ${booking.id}:`, err);
+              }
+            }
+          })
+        );
+      }
     }
 
     return updatedShipment;
@@ -389,8 +525,29 @@ export const shipmentService = {
     if (query.destinationCountry) filters.destinationCountry = query.destinationCountry;
     if (query.destinationCity) filters.destinationCity = query.destinationCity;
     if (query.mode) filters.mode = query.mode as any;
-    if (query.dateFrom) filters.departureFrom = new Date(query.dateFrom);
+    
+    // Handle departure date filtering - default to today if only dateTo is provided
+    if (query.dateFrom) {
+      filters.departureFrom = new Date(query.dateFrom);
+    } else if (query.dateTo) {
+      // Default to today at midnight if only dateTo is provided
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      filters.departureFrom = today;
+    }
     if (query.dateTo) filters.departureTo = new Date(query.dateTo);
+    
+    // Handle arrival date filtering - default to today if only arrivalTo is provided
+    if (query.arrivalFrom) {
+      filters.arrivalFrom = new Date(query.arrivalFrom);
+    } else if (query.arrivalTo) {
+      // Default to today at midnight if only arrivalTo is provided
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      filters.arrivalFrom = today;
+    }
+    if (query.arrivalTo) filters.arrivalTo = new Date(query.arrivalTo);
+    
     if (query.minPrice) filters.minPrice = parseFloat(query.minPrice);
     if (query.maxPrice) filters.maxPrice = parseFloat(query.maxPrice);
 

@@ -17,6 +17,8 @@ import contactRoutes from './modules/contact/routes';
 import onboardingRoutes from './modules/onboarding/routes';
 import customerRoutes from './modules/customer/routes';
 import notificationRoutes from './modules/notifications/routes';
+import uploadRoutes from './modules/uploads/routes';
+import reviewRoutes from './modules/reviews/routes';
 import { paymentController } from './modules/payments/controller';
 
 const app: Express = express();
@@ -57,10 +59,14 @@ app.get('/health', (_req, res) => {
 // Routes
 app.use('/auth', authRoutes);
 app.use('/plans', planRoutes);
-app.use('/companies', companyRoutes);
+// Register specific company routes BEFORE the general /companies route
+// to avoid conflicts with the catch-all :companyIdOrSlug route
 app.use('/companies/shipments', shipmentRoutes);
 app.use('/companies/bookings', bookingRoutes);
 app.use('/companies/payments', companyPaymentRoutes);
+app.use('/companies/subscription', subscriptionRoutes); // Company admin subscription routes (GET /, POST /cancel, PUT /payment-method)
+app.use('/companies/notifications', notificationRoutes);
+app.use('/companies', companyRoutes);
 app.use('/shipments', shipmentRoutes); // Keep for backward compatibility
 app.use('/bookings', bookingRoutes); // Keep for backward compatibility
 app.use('/payments', paymentRoutes);
@@ -68,13 +74,14 @@ app.use('/payments', paymentRoutes);
 // This handles /webhook/stripe (without 's' and without /payments prefix)
 app.post('/webhook/stripe', paymentController.handleWebhook);
 app.use('/subscriptions', subscriptionRoutes);
-app.use('/companies/subscription', subscriptionRoutes); // Company admin subscription routes (GET /, POST /cancel, PUT /payment-method)
 app.use('/admin', adminRoutes);
 app.use('/contact', contactRoutes);
 app.use('/onboarding', onboardingRoutes);
 app.use('/customer', customerRoutes);
 app.use('/customer/notifications', notificationRoutes);
 app.use('/companies/notifications', notificationRoutes);
+app.use('/uploads', uploadRoutes);
+app.use('/', reviewRoutes); // Reviews routes (includes /bookings/:bookingId/reviews, /companies/:companyId/reviews, etc.)
 
 // Error handling middleware (must be last)
 app.use(errorHandler);

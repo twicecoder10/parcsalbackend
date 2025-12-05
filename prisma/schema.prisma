@@ -82,6 +82,27 @@ enum SlotTrackingStatus {
   DELIVERED
 }
 
+enum ParcelType {
+  DOCUMENT
+  PACKAGE
+  FRAGILE
+  ELECTRONICS
+  CLOTHING
+  FOOD
+  MEDICINE
+  OTHER
+}
+
+enum PickupMethod {
+  PICKUP_FROM_SENDER
+  DROP_OFF_AT_COMPANY
+}
+
+enum DeliveryMethod {
+  RECEIVER_PICKS_UP
+  DELIVERED_TO_RECEIVER
+}
+
 model User {
   id                    String    @id @default(uuid())
   email                 String    @unique
@@ -114,6 +135,7 @@ model User {
   createdCompany Company? @relation("CompanyAdmin")
   sentInvitations TeamInvitation[] @relation("InvitedBy")
   acceptedInvitations TeamInvitation[] @relation("AcceptedBy")
+  reviews        Review[]
 
   @@index([email])
   @@index([companyId])
@@ -149,15 +171,39 @@ model Company {
   updatedAt           DateTime     @updatedAt
 
   // Relations
-  staff         User[]
-  shipmentSlots ShipmentSlot[]
-  subscriptions Subscription[]
-  bookings      Booking[]      @relation("CompanyBookings")
-  invitations   TeamInvitation[]
+  staff            User[]
+  shipmentSlots    ShipmentSlot[]
+  subscriptions    Subscription[]
+  bookings         Booking[]      @relation("CompanyBookings")
+  invitations      TeamInvitation[]
+  warehouseAddresses WarehouseAddress[]
+  reviews          Review[]
 
   @@index([slug])
   @@index([isVerified])
   @@index([onboardingCompleted])
+}
+
+model WarehouseAddress {
+  id          String   @id @default(uuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name        String   // e.g., "Main Warehouse", "London Warehouse"
+  address     String
+  city        String
+  state       String?
+  country     String
+  postalCode  String?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  pickupBookings    Booking[] @relation("PickupWarehouse")
+  deliveryBookings  Booking[] @relation("DeliveryWarehouse")
+
+  @@index([companyId])
+  @@index([companyId, isDefault])
 }
 
 model CompanyPlan {
@@ -226,11 +272,48 @@ model Booking {
   status            BookingStatus @default(PENDING)
   paymentStatus     PaymentStatus @default(PENDING)
   notes             String?
+  // New parcel information fields
+  parcelType        ParcelType?
+  weight            Float?        // Actual weight of the parcel (separate from requestedWeightKg for capacity)
+  value             Decimal?      @db.Decimal(10, 2) // Monetary value of the parcel
+  length            Float?        // Length in cm
+  width             Float?        // Width in cm
+  height            Float?        // Height in cm
+  description       String?
+  images            String[]      @default([]) // Array of image URLs
+  pickupMethod      PickupMethod
+  deliveryMethod    DeliveryMethod
+  // Pickup address (when pickupMethod is PICKUP_FROM_SENDER)
+  pickupAddress     String?
+  pickupCity        String?
+  pickupState       String?
+  pickupCountry     String?
+  pickupPostalCode  String?
+  pickupContactName String?
+  pickupContactPhone String?
+  // Pickup warehouse reference (when pickupMethod is DROP_OFF_AT_COMPANY)
+  pickupWarehouseId String?
+  pickupWarehouse   WarehouseAddress? @relation("PickupWarehouse", fields: [pickupWarehouseId], references: [id], onDelete: SetNull)
+  // Delivery address (when deliveryMethod is DELIVERED_TO_RECEIVER)
+  deliveryAddress     String?
+  deliveryCity        String?
+  deliveryState       String?
+  deliveryCountry     String?
+  deliveryPostalCode  String?
+  deliveryContactName String?
+  deliveryContactPhone String?
+  // Delivery warehouse reference (when deliveryMethod is RECEIVER_PICKS_UP)
+  deliveryWarehouseId String?
+  deliveryWarehouse   WarehouseAddress? @relation("DeliveryWarehouse", fields: [deliveryWarehouseId], references: [id], onDelete: SetNull)
+  // Proof images for companies
+  pickupProofImages   String[]      @default([]) // Array of proof of pickup image URLs
+  deliveryProofImages String[]      @default([]) // Array of proof of delivery image URLs
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
   // Relations
   payment Payment?
+  review  Review?
 
   @@index([customerId])
   @@index([companyId])
@@ -332,5 +415,25 @@ model TeamInvitation {
   @@index([token])
   @@index([status])
   @@index([expiresAt])
+}
+
+model Review {
+  id           String   @id @default(uuid())
+  bookingId    String   @unique
+  booking      Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customerId   String
+  customer     User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  rating       Int      // 1-5 star rating
+  comment      String?  // Optional review comment
+  companyReply String?  // Optional company reply to the review
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([customerId])
+  @@index([bookingId])
+  @@index([rating])
 }
 

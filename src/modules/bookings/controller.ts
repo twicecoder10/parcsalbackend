@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { bookingService } from './service';
-import { CreateBookingDto, UpdateBookingStatusDto } from './dto';
+import { CreateBookingDto, UpdateBookingStatusDto, AddProofImagesDto } from './dto';
 import { AuthRequest } from '../../middleware/auth';
 
 export const bookingController = {
@@ -114,6 +114,21 @@ export const bookingController = {
       res.status(200).json({
         status: 'success',
         data: stats,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async addProofImages(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const dto = req.body as AddProofImagesDto;
+      const booking = await bookingService.addProofImages(req, id, dto);
+
+      res.status(200).json({
+        status: 'success',
+        data: booking,
       });
     } catch (error) {
       next(error);

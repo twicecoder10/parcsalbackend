@@ -859,5 +859,380 @@ export const emailService = {
       html
     );
   },
+
+  async sendBookingCancelledEmail(
+    email: string,
+    customerName: string,
+    bookingId: string,
+    bookingDetails: {
+      originCity: string;
+      originCountry: string;
+      destinationCity: string;
+      destinationCountry: string;
+      departureTime: Date;
+      arrivalTime: Date;
+      mode: string;
+      price: number;
+      currency: string;
+    },
+    companyName: string
+  ) {
+    const formattedPrice = new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: bookingDetails.currency.toUpperCase(),
+    }).format(bookingDetails.price);
+
+    const reviewUrl = `${config.frontendUrl}/customer/bookings/${bookingId}/review`;
+
+    const html = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>Booking Cancelled - Parcsal</title>
+      </head>
+      <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5; line-height: 1.6;">
+        <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f5f5; padding: 20px 0;">
+          <tr>
+            <td align="center" style="padding: 20px 0;">
+              <table role="presentation" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); overflow: hidden;">
+                <!-- Header -->
+                <tr>
+                  <td style="background: linear-gradient(135deg, #FF9800 0%, #FFB74D 100%); padding: 40px 30px; text-align: center;">
+                    <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Booking Cancelled</h1>
+                    <p style="margin: 12px 0 0 0; color: #ffffff; font-size: 16px; opacity: 0.9;">Your booking has been cancelled</p>
+                  </td>
+                </tr>
+                <!-- Content -->
+                <tr>
+                  <td style="padding: 40px 30px;">
+                    <p style="margin: 0 0 16px 0; color: #1A1A1A; font-size: 16px;">Hello ${customerName},</p>
+                    <p style="margin: 0 0 24px 0; color: #4A4A4A; font-size: 16px;">We're writing to inform you that your booking with <strong>${companyName}</strong> has been cancelled.</p>
+                    
+                    <!-- Booking Details -->
+                    <div style="background-color: #F8F8F8; border-radius: 8px; padding: 24px; margin: 24px 0; border: 1px solid #EEEEEE;">
+                      <h2 style="margin: 0 0 20px 0; color: #1A1A1A; font-size: 18px; font-weight: 600;">Booking Information</h2>
+                      <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Booking ID:</strong>
+                            <span style="color: #4A4A4A; font-size: 13px; font-family: 'Courier New', monospace;">${bookingId}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Route:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${bookingDetails.originCity}, ${bookingDetails.originCountry} → ${bookingDetails.destinationCity}, ${bookingDetails.destinationCountry}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Mode:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px; text-transform: capitalize;">${bookingDetails.mode}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Total Price:</strong>
+                            <span style="color: #4A4A4A; font-size: 16px; font-weight: 600;">${formattedPrice}</span>
+                          </td>
+                        </tr>
+                      </table>
+                    </div>
+                    
+                    <!-- Review CTA -->
+                    <div style="background-color: #FFF5F0; border-left: 4px solid #FF6B35; padding: 20px; margin: 24px 0; border-radius: 4px;">
+                      <h3 style="margin: 0 0 12px 0; color: #1A1A1A; font-size: 16px; font-weight: 600;">Share Your Experience</h3>
+                      <p style="margin: 0 0 16px 0; color: #4A4A4A; font-size: 14px;">We'd love to hear about your experience with this booking. Your feedback helps us improve our service.</p>
+                      <table role="presentation" style="width: 100%; margin: 16px 0;">
+                        <tr>
+                          <td align="center" style="padding: 0;">
+                            <a href="${reviewUrl}" style="display: inline-block; background-color: #FF6B35; color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 600; font-size: 16px; text-align: center; box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3);">Leave a Review</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </div>
+                    
+                    <div style="background-color: #FFF3E0; border-left: 3px solid #FF9800; padding: 16px; margin: 24px 0; border-radius: 4px;">
+                      <p style="margin: 0 0 8px 0; color: #E65100; font-size: 14px; font-weight: 600;">ℹ️ Need Help?</p>
+                      <p style="margin: 0; color: #E65100; font-size: 14px;">If you have any questions about this cancellation, please contact ${companyName} or our support team.</p>
+                    </div>
+                  </td>
+                </tr>
+                <!-- Footer -->
+                <tr>
+                  <td style="background-color: #F8F8F8; padding: 24px 30px; text-align: center; border-top: 1px solid #EEEEEE;">
+                    <p style="margin: 0 0 8px 0; color: #999999; font-size: 12px;">© ${new Date().getFullYear()} Parcsal. All rights reserved.</p>
+                    <p style="margin: 0; color: #999999; font-size: 12px;">You're receiving this email because you have a booking on Parcsal.</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
+    `;
+
+    return this.sendEmail(
+      email,
+      `Booking Cancelled - ${bookingDetails.originCity} to ${bookingDetails.destinationCity} - Parcsal`,
+      html
+    );
+  },
+
+  async sendBookingDelayedEmail(
+    email: string,
+    customerName: string,
+    bookingId: string,
+    bookingDetails: {
+      originCity: string;
+      originCountry: string;
+      destinationCity: string;
+      destinationCountry: string;
+      departureTime: Date;
+      arrivalTime: Date;
+      mode: string;
+      price: number;
+      currency: string;
+    },
+    companyName: string
+  ) {
+    const reviewUrl = `${config.frontendUrl}/customer/bookings/${bookingId}/review`;
+
+    const html = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>Shipment Delayed - Parcsal</title>
+      </head>
+      <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5; line-height: 1.6;">
+        <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f5f5; padding: 20px 0;">
+          <tr>
+            <td align="center" style="padding: 20px 0;">
+              <table role="presentation" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); overflow: hidden;">
+                <!-- Header -->
+                <tr>
+                  <td style="background: linear-gradient(135deg, #FF9800 0%, #FFB74D 100%); padding: 40px 30px; text-align: center;">
+                    <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Shipment Delayed</h1>
+                    <p style="margin: 12px 0 0 0; color: #ffffff; font-size: 16px; opacity: 0.9;">Your shipment has been delayed</p>
+                  </td>
+                </tr>
+                <!-- Content -->
+                <tr>
+                  <td style="padding: 40px 30px;">
+                    <p style="margin: 0 0 16px 0; color: #1A1A1A; font-size: 16px;">Hello ${customerName},</p>
+                    <p style="margin: 0 0 24px 0; color: #4A4A4A; font-size: 16px;">We're writing to inform you that your shipment with <strong>${companyName}</strong> has been delayed. We apologize for any inconvenience this may cause.</p>
+                    
+                    <!-- Booking Details -->
+                    <div style="background-color: #F8F8F8; border-radius: 8px; padding: 24px; margin: 24px 0; border: 1px solid #EEEEEE;">
+                      <h2 style="margin: 0 0 20px 0; color: #1A1A1A; font-size: 18px; font-weight: 600;">Booking Information</h2>
+                      <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Booking ID:</strong>
+                            <span style="color: #4A4A4A; font-size: 13px; font-family: 'Courier New', monospace;">${bookingId}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Route:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${bookingDetails.originCity}, ${bookingDetails.originCountry} → ${bookingDetails.destinationCity}, ${bookingDetails.destinationCountry}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Mode:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px; text-transform: capitalize;">${bookingDetails.mode}</span>
+                          </td>
+                        </tr>
+                      </table>
+                    </div>
+                    
+                    <!-- Review CTA -->
+                    <div style="background-color: #FFF5F0; border-left: 4px solid #FF6B35; padding: 20px; margin: 24px 0; border-radius: 4px;">
+                      <h3 style="margin: 0 0 12px 0; color: #1A1A1A; font-size: 16px; font-weight: 600;">Share Your Experience</h3>
+                      <p style="margin: 0 0 16px 0; color: #4A4A4A; font-size: 14px;">We value your feedback. Please let us know about your experience with this delayed shipment.</p>
+                      <table role="presentation" style="width: 100%; margin: 16px 0;">
+                        <tr>
+                          <td align="center" style="padding: 0;">
+                            <a href="${reviewUrl}" style="display: inline-block; background-color: #FF6B35; color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 600; font-size: 16px; text-align: center; box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3);">Leave a Review</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </div>
+                    
+                    <div style="background-color: #FFF3E0; border-left: 3px solid #FF9800; padding: 16px; margin: 24px 0; border-radius: 4px;">
+                      <p style="margin: 0 0 8px 0; color: #E65100; font-size: 14px; font-weight: 600;">ℹ️ Need Updates?</p>
+                      <p style="margin: 0; color: #E65100; font-size: 14px;">For more information about the delay, please contact ${companyName} or check your booking status in your account.</p>
+                    </div>
+                  </td>
+                </tr>
+                <!-- Footer -->
+                <tr>
+                  <td style="background-color: #F8F8F8; padding: 24px 30px; text-align: center; border-top: 1px solid #EEEEEE;">
+                    <p style="margin: 0 0 8px 0; color: #999999; font-size: 12px;">© ${new Date().getFullYear()} Parcsal. All rights reserved.</p>
+                    <p style="margin: 0; color: #999999; font-size: 12px;">You're receiving this email because you have a booking on Parcsal.</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
+    `;
+
+    return this.sendEmail(
+      email,
+      `Shipment Delayed - ${bookingDetails.originCity} to ${bookingDetails.destinationCity} - Parcsal`,
+      html
+    );
+  },
+
+  async sendBookingDeliveredEmail(
+    email: string,
+    customerName: string,
+    bookingId: string,
+    bookingDetails: {
+      originCity: string;
+      originCountry: string;
+      destinationCity: string;
+      destinationCountry: string;
+      departureTime: Date;
+      arrivalTime: Date;
+      mode: string;
+      price: number;
+      currency: string;
+    },
+    companyName: string
+  ) {
+    const departureDate = new Intl.DateTimeFormat('en-GB', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(bookingDetails.departureTime));
+
+    const arrivalDate = new Intl.DateTimeFormat('en-GB', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(bookingDetails.arrivalTime));
+
+    const reviewUrl = `${config.frontendUrl}/customer/bookings/${bookingId}/review`;
+
+    const html = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>Shipment Delivered - Parcsal</title>
+      </head>
+      <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5; line-height: 1.6;">
+        <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f5f5; padding: 20px 0;">
+          <tr>
+            <td align="center" style="padding: 20px 0;">
+              <table role="presentation" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); overflow: hidden;">
+                <!-- Header -->
+                <tr>
+                  <td style="background: linear-gradient(135deg, #4CAF50 0%, #66BB6A 100%); padding: 40px 30px; text-align: center;">
+                    <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Shipment Delivered!</h1>
+                    <p style="margin: 12px 0 0 0; color: #ffffff; font-size: 16px; opacity: 0.9;">Your shipment has been successfully delivered</p>
+                  </td>
+                </tr>
+                <!-- Content -->
+                <tr>
+                  <td style="padding: 40px 30px;">
+                    <p style="margin: 0 0 16px 0; color: #1A1A1A; font-size: 16px;">Hello ${customerName},</p>
+                    <p style="margin: 0 0 24px 0; color: #4A4A4A; font-size: 16px;">Great news! Your shipment with <strong>${companyName}</strong> has been successfully delivered to its destination.</p>
+                    
+                    <!-- Booking Details -->
+                    <div style="background-color: #F8F8F8; border-radius: 8px; padding: 24px; margin: 24px 0; border: 1px solid #EEEEEE;">
+                      <h2 style="margin: 0 0 20px 0; color: #1A1A1A; font-size: 18px; font-weight: 600;">Booking Information</h2>
+                      <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Booking ID:</strong>
+                            <span style="color: #4A4A4A; font-size: 13px; font-family: 'Courier New', monospace;">${bookingId}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Route:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${bookingDetails.originCity}, ${bookingDetails.originCountry} → ${bookingDetails.destinationCity}, ${bookingDetails.destinationCountry}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Mode:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px; text-transform: capitalize;">${bookingDetails.mode}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Departure:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${departureDate}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Arrival:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${arrivalDate}</span>
+                          </td>
+                        </tr>
+                      </table>
+                    </div>
+                    
+                    <!-- Review CTA -->
+                    <div style="background-color: #E8F5E9; border-left: 4px solid #4CAF50; padding: 20px; margin: 24px 0; border-radius: 4px;">
+                      <h3 style="margin: 0 0 12px 0; color: #1A1A1A; font-size: 16px; font-weight: 600;">How Was Your Experience?</h3>
+                      <p style="margin: 0 0 16px 0; color: #4A4A4A; font-size: 14px;">We'd love to hear about your experience! Your feedback helps us improve our service and helps other customers make informed decisions.</p>
+                      <table role="presentation" style="width: 100%; margin: 16px 0;">
+                        <tr>
+                          <td align="center" style="padding: 0;">
+                            <a href="${reviewUrl}" style="display: inline-block; background-color: #4CAF50; color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 600; font-size: 16px; text-align: center; box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);">Leave a Review</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </div>
+                    
+                    <div style="background-color: #E8F5E9; border-left: 3px solid #4CAF50; padding: 16px; margin: 24px 0; border-radius: 4px;">
+                      <p style="margin: 0 0 8px 0; color: #2E7D32; font-size: 14px; font-weight: 600;">✓ Delivery Confirmed</p>
+                      <p style="margin: 0; color: #2E7D32; font-size: 14px;">Your shipment has been successfully delivered. Thank you for using Parcsal!</p>
+                    </div>
+                  </td>
+                </tr>
+                <!-- Footer -->
+                <tr>
+                  <td style="background-color: #F8F8F8; padding: 24px 30px; text-align: center; border-top: 1px solid #EEEEEE;">
+                    <p style="margin: 0 0 8px 0; color: #999999; font-size: 12px;">© ${new Date().getFullYear()} Parcsal. All rights reserved.</p>
+                    <p style="margin: 0; color: #999999; font-size: 12px;">You're receiving this email because you have a booking on Parcsal.</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
+    `;
+
+    return this.sendEmail(
+      email,
+      `Shipment Delivered - ${bookingDetails.originCity} to ${bookingDetails.destinationCity} - Parcsal`,
+      html
+    );
+  },
 };
 

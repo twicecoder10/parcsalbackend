@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { companyController } from './controller';
 import { authenticate, requireCompanyAccess } from '../../middleware/auth';
 import { validate } from '../../middleware/validator';
-import { updateCompanySchema, completeCompanyOnboardingSchema } from './dto';
+import { updateCompanySchema, completeCompanyOnboardingSchema, createWarehouseAddressSchema, updateWarehouseAddressSchema, deleteWarehouseAddressSchema, getCompanyWarehousesSchema, getPublicCompanyProfileSchema } from './dto';
 
 const router = Router();
 
@@ -140,6 +140,51 @@ router.delete(
   authenticate,
   requireCompanyAccess,
   companyController.cancelInvitation
+);
+
+// Warehouse Addresses
+router.post(
+  '/warehouses',
+  authenticate,
+  requireCompanyAccess,
+  validate(createWarehouseAddressSchema),
+  companyController.createWarehouseAddress
+);
+
+router.get(
+  '/warehouses',
+  authenticate,
+  requireCompanyAccess,
+  companyController.listWarehouseAddresses
+);
+
+router.patch(
+  '/warehouses/:id',
+  authenticate,
+  requireCompanyAccess,
+  validate(updateWarehouseAddressSchema),
+  companyController.updateWarehouseAddress
+);
+
+router.delete(
+  '/warehouses/:id',
+  authenticate,
+  requireCompanyAccess,
+  validate(deleteWarehouseAddressSchema),
+  companyController.deleteWarehouseAddress
+);
+
+// Public routes (must be after all specific routes to avoid conflicts)
+router.get(
+  '/:companyIdOrSlug/warehouses',
+  validate(getCompanyWarehousesSchema),
+  companyController.getCompanyWarehouseAddresses
+);
+
+router.get(
+  '/:companyIdOrSlug',
+  validate(getPublicCompanyProfileSchema),
+  companyController.getPublicCompanyProfile
 );
 
 export default router;

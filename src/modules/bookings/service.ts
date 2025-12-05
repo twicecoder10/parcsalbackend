@@ -1,5 +1,5 @@
 import { bookingRepository, CreateBookingData } from './repository';
-import { CreateBookingDto, UpdateBookingStatusDto } from './dto';
+import { CreateBookingDto, UpdateBookingStatusDto, AddProofImagesDto } from './dto';
 import { NotFoundError, ForbiddenError, BadRequestError } from '../../utils/errors';
 import { AuthRequest } from '../../middleware/auth';
 import { parsePagination, createPaginatedResponse } from '../../utils/pagination';
@@ -11,6 +11,7 @@ import { emailService } from '../../config/email';
 import Stripe from 'stripe';
 import { config } from '../../config/env';
 import { generateBookingId } from '../../utils/bookingId';
+import { deleteImagesByUrls } from '../../utils/upload';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -104,6 +105,25 @@ export const bookingService = {
       // For now, just check if slot is published (already done above)
     }
 
+    // Validate warehouse addresses belong to the company
+    if (dto.pickupWarehouseId) {
+      const pickupWarehouse = await prisma.warehouseAddress.findUnique({
+        where: { id: dto.pickupWarehouseId },
+      });
+      if (!pickupWarehouse || pickupWarehouse.companyId !== shipmentSlot.companyId) {
+        throw new BadRequestError('Pickup warehouse address does not belong to this company');
+      }
+    }
+
+    if (dto.deliveryWarehouseId) {
+      const deliveryWarehouse = await prisma.warehouseAddress.findUnique({
+        where: { id: dto.deliveryWarehouseId },
+      });
+      if (!deliveryWarehouse || deliveryWarehouse.companyId !== shipmentSlot.companyId) {
+        throw new BadRequestError('Delivery warehouse address does not belong to this company');
+      }
+    }
+
     // Calculate price
     const calculatedPrice = this.calculatePrice(
       shipmentSlot.pricingModel,
@@ -154,6 +174,34 @@ export const bookingService = {
         notes: dto.notes || null,
         status: 'PENDING',
         paymentStatus: 'PENDING',
+        // New parcel information fields
+        parcelType: dto.parcelType || null,
+        weight: dto.weight || null,
+        value: dto.value ? new Decimal(dto.value) : null,
+        length: dto.length || null,
+        width: dto.width || null,
+        height: dto.height || null,
+        description: dto.description || null,
+        images: dto.images || [],
+        pickupMethod: dto.pickupMethod,
+        deliveryMethod: dto.deliveryMethod,
+        // Address fields
+        pickupAddress: dto.pickupAddress || null,
+        pickupCity: dto.pickupCity || null,
+        pickupState: dto.pickupState || null,
+        pickupCountry: dto.pickupCountry || null,
+        pickupPostalCode: dto.pickupPostalCode || null,
+        pickupContactName: dto.pickupContactName || null,
+        pickupContactPhone: dto.pickupContactPhone || null,
+        pickupWarehouseId: dto.pickupWarehouseId || null,
+        deliveryAddress: dto.deliveryAddress || null,
+        deliveryCity: dto.deliveryCity || null,
+        deliveryState: dto.deliveryState || null,
+        deliveryCountry: dto.deliveryCountry || null,
+        deliveryPostalCode: dto.deliveryPostalCode || null,
+        deliveryContactName: dto.deliveryContactName || null,
+        deliveryContactPhone: dto.deliveryContactPhone || null,
+        deliveryWarehouseId: dto.deliveryWarehouseId || null,
       };
 
       const newBooking = await tx.booking.create({
@@ -451,6 +499,131 @@ export const bookingService = {
             bookingForEmail.company.contactPhone || undefined
           ).catch((err) => {
             console.error('Failed to send booking confirmation email:', err);
+          });
+        }
+      }
+
+      // Send email when booking is cancelled
+      if (dto.status === 'CANCELLED') {
+        // Get full booking details for email
+        const bookingForEmail = await prisma.booking.findUnique({
+          where: { id: booking.id },
+          include: {
+            customer: {
+              select: {
+                email: true,
+                fullName: true,
+                notificationEmail: true,
+              },
+            },
+            shipmentSlot: {
+              select: {
+                originCity: true,
+                originCountry: true,
+                destinationCity: true,
+                destinationCountry: true,
+                departureTime: true,
+                arrivalTime: true,
+                mode: true,
+              },
+            },
+            company: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        });
+
+        if (bookingForEmail && bookingForEmail.customer.notificationEmail) {
+          await emailService.sendBookingCancelledEmail(
+            bookingForEmail.customer.email,
+            bookingForEmail.customer.fullName,
+            booking.id,
+            {
+              originCity: bookingForEmail.shipmentSlot.originCity,
+              originCountry: bookingForEmail.shipmentSlot.originCountry,
+              destinationCity: bookingForEmail.shipmentSlot.destinationCity,
+              destinationCountry: bookingForEmail.shipmentSlot.destinationCountry,
+              departureTime: bookingForEmail.shipmentSlot.departureTime,
+              arrivalTime: bookingForEmail.shipmentSlot.arrivalTime,
+              mode: bookingForEmail.shipmentSlot.mode,
+              price: Number(bookingForEmail.calculatedPrice),
+              currency: 'gbp',
+            },
+            bookingForEmail.company.name
+          ).catch((err) => {
+            console.error('Failed to send booking cancelled email:', err);
+          });
+        }
+      }
+
+      // Send email when booking is delivered
+      if (dto.status === 'DELIVERED') {
+        // Get full booking details for email
+        const bookingForEmail = await prisma.booking.findUnique({
+          where: { id: booking.id },
+          include: {
+            customer: {
+              select: {
+                email: true,
+                fullName: true,
+                notificationEmail: true,
+              },
+            },
+            shipmentSlot: {
+              select: {
+                originCity: true,
+                originCountry: true,
+                destinationCity: true,
+                destinationCountry: true,
+                departureTime: true,
+                arrivalTime: true,
+                mode: true,
+              },
+            },
+            company: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        });
+
+        if (bookingForEmail && bookingForEmail.customer.notificationEmail) {
+          await emailService.sendBookingDeliveredEmail(
+            bookingForEmail.customer.email,
+            bookingForEmail.customer.fullName,
+            booking.id,
+            {
+              originCity: bookingForEmail.shipmentSlot.originCity,
+              originCountry: bookingForEmail.shipmentSlot.originCountry,
+              destinationCity: bookingForEmail.shipmentSlot.destinationCity,
+              destinationCountry: bookingForEmail.shipmentSlot.destinationCountry,
+              departureTime: bookingForEmail.shipmentSlot.departureTime,
+              arrivalTime: bookingForEmail.shipmentSlot.arrivalTime,
+              mode: bookingForEmail.shipmentSlot.mode,
+              price: Number(bookingForEmail.calculatedPrice),
+              currency: 'gbp',
+            },
+            bookingForEmail.company.name
+          ).catch((err) => {
+            console.error('Failed to send booking delivered email:', err);
+          });
+        }
+      }
+
+      // Clean up images when booking is cancelled or rejected
+      if (dto.status === 'CANCELLED' || dto.status === 'REJECTED') {
+        const imagesToDelete: string[] = [
+          ...(booking.images || []),
+          ...(booking.pickupProofImages || []),
+          ...(booking.deliveryProofImages || []),
+        ];
+
+        if (imagesToDelete.length > 0) {
+          deleteImagesByUrls(imagesToDelete).catch((err) => {
+            console.error(`Failed to cleanup images for ${dto.status.toLowerCase()} booking ${booking.id}:`, err);
           });
         }
       }
@@ -757,6 +930,19 @@ export const bookingService = {
       console.error('Failed to create notification:', err);
     });
 
+    // Clean up booking images (parcel images, pickup proof, delivery proof)
+    const imagesToDelete: string[] = [
+      ...(booking.images || []),
+      ...(booking.pickupProofImages || []),
+      ...(booking.deliveryProofImages || []),
+    ];
+
+    if (imagesToDelete.length > 0) {
+      deleteImagesByUrls(imagesToDelete).catch((err) => {
+        console.error(`Failed to cleanup images for rejected booking ${booking.id}:`, err);
+      });
+    }
+
     return updatedBooking;
   },
 
@@ -791,6 +977,46 @@ export const bookingService = {
       rejected,
       revenue: Number(revenueData._sum.calculatedPrice || 0),
     };
+  },
+
+  async addProofImages(req: AuthRequest, id: string, dto: AddProofImagesDto) {
+    // Get booking - verify it exists first
+    const booking = await bookingRepository.findById(id);
+    if (!booking) {
+      throw new NotFoundError('Booking not found');
+    }
+
+    // Verify booking is in a state that allows adding proof images
+    // Proof images should only be added to accepted or in-transit bookings
+    if (booking.status === 'REJECTED' || booking.status === 'CANCELLED') {
+      throw new BadRequestError('Cannot add proof images to a rejected or cancelled booking');
+    }
+
+    // Verify ownership - only company can add proof images
+    if (!req.user) {
+      throw new ForbiddenError('Authentication required');
+    }
+
+    const isCompanyOwner = booking.companyId === req.user.companyId;
+    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+
+    if (!isCompanyOwner && !isSuperAdmin) {
+      throw new ForbiddenError('You do not have permission to add proof images to this booking');
+    }
+
+    // Validate at least one proof image array is provided
+    if ((!dto.pickupProofImages || dto.pickupProofImages.length === 0) &&
+        (!dto.deliveryProofImages || dto.deliveryProofImages.length === 0)) {
+      throw new BadRequestError('At least one proof image is required');
+    }
+
+    const updatedBooking = await bookingRepository.addProofImages(
+      id,
+      dto.pickupProofImages || [],
+      dto.deliveryProofImages || []
+    );
+
+    return updatedBooking;
   },
 };
 

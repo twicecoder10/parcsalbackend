@@ -7,6 +7,7 @@ import {
   updateBookingStatusSchema,
   getBookingSchema,
   listBookingsSchema,
+  addProofImagesSchema,
 } from './dto';
 
 const router = Router();
@@ -104,6 +105,23 @@ router.get(
   authenticate,
   requireCompanyAccess,
   bookingController.getBookingStats
+);
+
+// Company route - Add proof images
+router.patch(
+  '/company/:id/proof-images',
+  authenticate,
+  requireCompanyAccess,
+  validate(addProofImagesSchema),
+  bookingController.addProofImages
+);
+
+router.patch(
+  '/:id/proof-images',
+  authenticate,
+  requireCompanyAccess,
+  validate(addProofImagesSchema),
+  bookingController.addProofImages
 );
 
 // Shared route (both customer and company can view their own bookings)

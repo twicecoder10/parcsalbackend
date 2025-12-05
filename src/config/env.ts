@@ -28,6 +28,13 @@ export const config = {
     from: process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@parcsal.com',
   },
   adminEmail: process.env.ADMIN_EMAIL || process.env.SMTP_USER || '',
+  azureStorage: {
+    connectionString: process.env.AZURE_STORAGE_CONNECTION_STRING || '',
+    accountName: process.env.AZURE_STORAGE_ACCOUNT_NAME || '',
+    accountKey: process.env.AZURE_STORAGE_ACCOUNT_KEY || '',
+    containerName: process.env.AZURE_STORAGE_CONTAINER_NAME || 'parcsal-uploads',
+    cdnUrl: process.env.AZURE_STORAGE_CDN_URL || '', // Optional CDN URL for serving images
+  },
 };
 
 // Validate required environment variables
@@ -37,6 +44,14 @@ const requiredEnvVars = [
   'JWT_REFRESH_SECRET',
   'STRIPE_SECRET_KEY',
 ];
+
+// Validate Azure Storage configuration in production
+if (config.nodeEnv === 'production') {
+  if (!config.azureStorage.connectionString && 
+      (!config.azureStorage.accountName || !config.azureStorage.accountKey)) {
+    throw new Error('Azure Storage configuration is required in production. Please provide AZURE_STORAGE_CONNECTION_STRING or both AZURE_STORAGE_ACCOUNT_NAME and AZURE_STORAGE_ACCOUNT_KEY');
+  }
+}
 
 if (config.nodeEnv === 'production') {
   for (const envVar of requiredEnvVars) {

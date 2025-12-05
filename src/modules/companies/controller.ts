@@ -1,6 +1,6 @@
-import { Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import { companyService } from './service';
-import { UpdateCompanyDto, CompleteCompanyOnboardingDto } from './dto';
+import { UpdateCompanyDto, CompleteCompanyOnboardingDto, CreateWarehouseAddressDto, UpdateWarehouseAddressDto } from './dto';
 import { AuthRequest } from '../../middleware/auth';
 
 export const companyController = {
@@ -269,6 +269,93 @@ export const companyController = {
       res.status(200).json({
         status: 'success',
         message: result.message,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // Warehouse Addresses
+  async createWarehouseAddress(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const dto = req.body as CreateWarehouseAddressDto;
+      const warehouseAddress = await companyService.createWarehouseAddress(req, dto);
+
+      res.status(201).json({
+        status: 'success',
+        data: warehouseAddress,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async listWarehouseAddresses(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const warehouseAddresses = await companyService.listWarehouseAddresses(req);
+
+      res.status(200).json({
+        status: 'success',
+        data: warehouseAddresses,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async updateWarehouseAddress(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const dto = req.body as UpdateWarehouseAddressDto;
+      const warehouseAddress = await companyService.updateWarehouseAddress(req, id, dto);
+
+      res.status(200).json({
+        status: 'success',
+        data: warehouseAddress,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async deleteWarehouseAddress(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const result = await companyService.deleteWarehouseAddress(req, id);
+
+      res.status(200).json({
+        status: 'success',
+        message: result.message,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // Public endpoint to get warehouse addresses by company ID or slug
+  async getCompanyWarehouseAddresses(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { companyIdOrSlug } = req.params;
+      const warehouseAddresses = await companyService.getCompanyWarehouseAddresses(companyIdOrSlug);
+
+      res.status(200).json({
+        status: 'success',
+        data: warehouseAddresses,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // Public endpoint to get company profile with limited info
+  async getPublicCompanyProfile(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { companyIdOrSlug } = req.params;
+      const company = await companyService.getPublicCompanyProfile(companyIdOrSlug);
+
+      res.status(200).json({
+        status: 'success',
+        data: company,
       });
     } catch (error) {
       next(error);

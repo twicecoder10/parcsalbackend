@@ -74,6 +74,9 @@ Backend API for Parcsal - A marketplace for parcel/cargo shipment slots.
    SUPER_ADMIN_EMAIL=Custom email
    SUPER_ADMIN_PASSWORD=Custom password
    SUPER_ADMIN_NAME=Custom name
+   # Azure Storage Configuration (Required)
+   AZURE_STORAGE_CONNECTION_STRING=your-azure-storage-connection-string
+   AZURE_STORAGE_CONTAINER_NAME=parcsal-uploads
    ```
 
 4. **Set up the database**
@@ -116,21 +119,40 @@ The server will start on `http://localhost:4000`
 ### Companies
 - `GET /companies/me` - Get authenticated company profile
 - `PATCH /companies/me` - Update company profile
+- `GET /companies/:companyIdOrSlug/warehouses` - Get warehouse addresses (public, verified companies only)
 
 ### Shipments
 - `POST /shipments` - Create shipment slot (company)
 - `GET /shipments/company` - List company's shipment slots
 - `PATCH /shipments/:id` - Update shipment slot
 - `PATCH /shipments/:id/status` - Update shipment status
-- `GET /shipments/search` - Search shipments (public)
+- `GET /shipments/search` - Search shipments (public) - **See [Shipments Search API Update](./SHIPMENTS_SEARCH_API_UPDATE.md) for latest date filtering features**
 - `GET /shipments/:id` - Get shipment details (public)
 
 ### Bookings
-- `POST /bookings` - Create booking (customer)
+- `POST /bookings` - Create booking (customer) - Supports address fields and parcel images
 - `GET /bookings/me` - List customer bookings
 - `GET /bookings/company` - List company bookings
 - `PATCH /bookings/company/:id/status` - Update booking status
+- `PATCH /bookings/:id/proof-images` - Add proof of pickup/delivery images (company)
 - `GET /bookings/:id` - Get booking details
+
+### Uploads
+- `POST /uploads/parcel-images` - Upload parcel images (customer)
+- `POST /uploads/proof-images` - Upload proof images (company)
+
+**See [Frontend Image Upload Guide](./FRONTEND_IMAGE_UPLOAD_GUIDE.md) for detailed implementation instructions.**
+
+### Reviews
+- `POST /customer/bookings/:bookingId/reviews` - Create a review (customer)
+- `PUT /customer/bookings/:bookingId/reviews` - Update a review (customer)
+- `DELETE /customer/bookings/:bookingId/reviews` - Delete a review (customer)
+- `GET /customer/reviews` - Get customer's reviews
+- `GET /bookings/:bookingId/reviews` - Get review for a booking (public)
+- `GET /companies/:companyId/reviews` - Get company reviews (public)
+- `GET /companies/:companyId/reviews/stats` - Get company review statistics (public)
+
+**See [Reviews API Documentation](./REVIEWS_API.md) for detailed request/response examples and integration guide.**
 
 ### Payments
 - `POST /payments/checkout-session` - Create Stripe checkout session
@@ -187,6 +209,7 @@ Key models:
 - **Payment**: Payment records linked to bookings
 - **Subscription**: Company subscription records
 - **Notification**: User notifications
+- **Review**: Customer reviews for companies (linked to bookings)
 
 See `prisma/schema.prisma` for complete schema definition.
 

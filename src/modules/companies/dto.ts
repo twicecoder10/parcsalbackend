@@ -42,7 +42,54 @@ export const completeCompanyOnboardingSchema = z.object({
   }),
 });
 
+export const createWarehouseAddressSchema = z.object({
+  body: z.object({
+    name: z.string().min(1, 'Warehouse name is required'),
+    address: z.string().min(1, 'Address is required'),
+    city: z.string().min(1, 'City is required'),
+    state: z.string().optional(),
+    country: z.string().min(1, 'Country is required'),
+    postalCode: z.string().optional(),
+    isDefault: z.boolean().optional().default(false),
+  }),
+});
+
+export const updateWarehouseAddressSchema = z.object({
+  params: z.object({
+    id: z.string().uuid('Invalid warehouse address ID'),
+  }),
+  body: z.object({
+    name: z.string().min(1).optional(),
+    address: z.string().min(1).optional(),
+    city: z.string().min(1).optional(),
+    state: z.string().optional(),
+    country: z.string().min(1).optional(),
+    postalCode: z.string().optional(),
+    isDefault: z.boolean().optional(),
+  }),
+});
+
+export const deleteWarehouseAddressSchema = z.object({
+  params: z.object({
+    id: z.string().uuid('Invalid warehouse address ID'),
+  }),
+});
+
+export const getCompanyWarehousesSchema = z.object({
+  params: z.object({
+    companyIdOrSlug: z.string().min(1, 'Company ID or slug is required'),
+  }),
+});
+
+export const getPublicCompanyProfileSchema = z.object({
+  params: z.object({
+    companyIdOrSlug: z.string().min(1, 'Company ID or slug is required'),
+  }),
+});
+
 export type UpdateCompanyDto = z.infer<typeof updateCompanySchema>['body'];
 export type VerifyCompanyDto = z.infer<typeof verifyCompanySchema>['body'];
 export type CompleteCompanyOnboardingDto = z.infer<typeof completeCompanyOnboardingSchema>['body'];
+export type CreateWarehouseAddressDto = z.infer<typeof createWarehouseAddressSchema>['body'];
+export type UpdateWarehouseAddressDto = z.infer<typeof updateWarehouseAddressSchema>['body'];
 

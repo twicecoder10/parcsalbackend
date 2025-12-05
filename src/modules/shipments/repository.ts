@@ -35,6 +35,8 @@ export interface SearchFilters {
   mode?: ShipmentMode;
   departureFrom?: Date;
   departureTo?: Date;
+  arrivalFrom?: Date;
+  arrivalTo?: Date;
   minPrice?: number;
   maxPrice?: number;
 }
@@ -232,13 +234,46 @@ export const shipmentRepository = {
     if (filters.mode) {
       where.mode = filters.mode;
     }
-    if (filters.departureFrom || filters.departureTo) {
+
+    // Handle date filtering with OR logic for departure/arrival
+    const hasDepartureFilter = filters.departureFrom || filters.departureTo;
+    const hasArrivalFilter = filters.arrivalFrom || filters.arrivalTo;
+    
+    if (hasDepartureFilter && hasArrivalFilter) {
+      // OR condition: departure between dates OR arrival between dates
+      const departureCondition: any = {};
+      if (filters.departureFrom) departureCondition.gte = filters.departureFrom;
+      if (filters.departureTo) departureCondition.lte = filters.departureTo;
+      
+      const arrivalCondition: any = {};
+      if (filters.arrivalFrom) arrivalCondition.gte = filters.arrivalFrom;
+      if (filters.arrivalTo) arrivalCondition.lte = filters.arrivalTo;
+      
+      where.OR = [
+        {
+          departureTime: departureCondition,
+        },
+        {
+          arrivalTime: arrivalCondition,
+        },
+      ];
+    } else if (hasDepartureFilter) {
+      // Only departure filter
       where.departureTime = {};
       if (filters.departureFrom) {
         where.departureTime.gte = filters.departureFrom;
       }
       if (filters.departureTo) {
         where.departureTime.lte = filters.departureTo;
+      }
+    } else if (hasArrivalFilter) {
+      // Only arrival filter
+      where.arrivalTime = {};
+      if (filters.arrivalFrom) {
+        where.arrivalTime.gte = filters.arrivalFrom;
+      }
+      if (filters.arrivalTo) {
+        where.arrivalTime.lte = filters.arrivalTo;
       }
     }
 
