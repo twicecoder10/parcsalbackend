@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { bookingIdValidator } from '../../utils/validators';
 
 const userRoleEnum = z.enum(['CUSTOMER', 'COMPANY_ADMIN', 'COMPANY_STAFF', 'SUPER_ADMIN']);
 const shipmentStatusEnum = z.enum(['DRAFT', 'PUBLISHED', 'CLOSED']);
@@ -203,7 +204,7 @@ export const listBookingsSchema = z.object({
 
 export const getBookingSchema = z.object({
   params: z.object({
-    id: z.string().uuid(),
+    id: bookingIdValidator,
   }),
 });
 
@@ -213,13 +214,13 @@ export const getBookingStatsSchema = z.object({
 
 export const confirmBookingSchema = z.object({
   params: z.object({
-    id: z.string().uuid(),
+    id: bookingIdValidator,
   }),
 });
 
 export const cancelBookingSchema = z.object({
   params: z.object({
-    id: z.string().uuid(),
+    id: bookingIdValidator,
   }),
   body: z.object({
     reason: z.string().optional(),

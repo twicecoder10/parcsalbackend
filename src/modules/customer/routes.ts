@@ -11,6 +11,8 @@ import {
   getRecentBookingsSchema,
   cancelBookingSchema,
   trackShipmentSchema,
+  createPaymentSessionSchema,
+  syncPaymentStatusSchema,
 } from './dto';
 import { listBookingsSchema, getBookingSchema, createBookingSchema } from '../bookings/dto';
 
@@ -51,9 +53,9 @@ router.get('/bookings/:id', validate(getBookingSchema), bookingController.getBoo
 router.post('/bookings/:id/cancel', validate(cancelBookingSchema), customerController.cancelBooking);
 
 // Payment - Create checkout session for booking payment
-router.post('/bookings/:id/payment', customerController.createPaymentSession);
+router.post('/bookings/:id/payment', validate(createPaymentSessionSchema), customerController.createPaymentSession);
 // Sync payment status (useful if webhook failed)
-router.post('/bookings/:id/payment/sync', customerController.syncPaymentStatus);
+router.post('/bookings/:id/payment/sync', validate(syncPaymentStatusSchema), customerController.syncPaymentStatus);
 
 // Tracking
 router.get(

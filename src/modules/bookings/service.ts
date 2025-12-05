@@ -8,6 +8,13 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { onboardingRepository } from '../onboarding/repository';
 import { createNotification, createCompanyNotification } from '../../utils/notifications';
 import { emailService } from '../../config/email';
+import Stripe from 'stripe';
+import { config } from '../../config/env';
+import { generateBookingId } from '../../utils/bookingId';
+
+const stripe = new Stripe(config.stripe.secretKey, {
+  apiVersion: '2023-10-16',
+});
 
 export const bookingService = {
   calculatePrice(
@@ -111,7 +118,7 @@ export const bookingService = {
     const customerId = req.user.id;
 
     // Create booking and update capacity in a transaction to prevent race conditions
-    const booking = await prisma.$transaction(async (tx) => {
+    const booking = await prisma.$transaction(async (tx): Promise<any> => {
       // Re-check capacity within transaction (with lock)
       const lockedSlot = await tx.shipmentSlot.findUnique({
         where: { id: dto.shipmentSlotId },
@@ -132,8 +139,12 @@ export const bookingService = {
         }
       }
 
+      // Generate custom booking ID within transaction for consistency
+      const bookingId = await generateBookingId(tx);
+      
       // Create booking
       const bookingData: CreateBookingData = {
+        id: bookingId,
         shipmentSlotId: dto.shipmentSlotId,
         customerId,
         companyId: shipmentSlot.companyId,
@@ -206,20 +217,43 @@ export const bookingService = {
     }
 
     // Notify company about new booking
-    await createCompanyNotification(
-      booking.companyId,
-      'BOOKING_CREATED',
-      'New Booking Received',
-      `A new booking has been received from ${booking.customer.fullName} for ${booking.shipmentSlot.originCity} to ${booking.shipmentSlot.destinationCity}`,
-      {
-        bookingId: booking.id,
-        customerId: booking.customerId,
-        customerName: booking.customer.fullName,
-        shipmentSlotId: booking.shipmentSlotId,
-      }
-    ).catch((err) => {
-      console.error('Failed to create notification:', err);
+    // Fetch booking with relations for notification
+    const bookingWithRelations = await prisma.booking.findUnique({
+      where: { id: booking.id },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            email: true,
+            fullName: true,
+          },
+        },
+        shipmentSlot: {
+          select: {
+            id: true,
+            originCity: true,
+            destinationCity: true,
+          },
+        },
+      },
     });
+    
+    if (bookingWithRelations?.customer && bookingWithRelations?.shipmentSlot) {
+      await createCompanyNotification(
+        booking.companyId,
+        'BOOKING_CREATED',
+        'New Booking Received',
+        `A new booking has been received from ${bookingWithRelations.customer.fullName} for ${bookingWithRelations.shipmentSlot.originCity} to ${bookingWithRelations.shipmentSlot.destinationCity}`,
+        {
+          bookingId: booking.id,
+          customerId: booking.customerId,
+          customerName: bookingWithRelations.customer.fullName,
+          shipmentSlotId: booking.shipmentSlotId,
+        }
+      ).catch((err) => {
+        console.error('Failed to create notification:', err);
+      });
+    }
 
     return booking;
   },
@@ -461,7 +495,84 @@ export const bookingService = {
       throw new BadRequestError('Only pending bookings can be accepted');
     }
 
-    return bookingRepository.updateStatus(id, 'ACCEPTED');
+    const updatedBooking = await bookingRepository.updateStatus(id, 'ACCEPTED');
+
+    // Get shipment slot details for email
+    const shipmentSlot = await prisma.shipmentSlot.findUnique({
+      where: { id: booking.shipmentSlotId },
+      select: {
+        originCity: true,
+        originCountry: true,
+        destinationCity: true,
+        destinationCountry: true,
+        departureTime: true,
+        arrivalTime: true,
+        mode: true,
+      },
+    });
+
+    // Get full booking details for email
+    const bookingForEmail = await prisma.booking.findUnique({
+      where: { id: booking.id },
+      include: {
+        customer: {
+          select: {
+            email: true,
+            fullName: true,
+            notificationEmail: true,
+          },
+        },
+        company: {
+          select: {
+            name: true,
+            contactEmail: true,
+            contactPhone: true,
+          },
+        },
+      },
+    });
+
+    // Send booking confirmation email
+    if (bookingForEmail && bookingForEmail.customer.notificationEmail && shipmentSlot) {
+      await emailService.sendBookingConfirmationEmail(
+        bookingForEmail.customer.email,
+        bookingForEmail.customer.fullName,
+        booking.id,
+        {
+          originCity: shipmentSlot.originCity,
+          originCountry: shipmentSlot.originCountry,
+          destinationCity: shipmentSlot.destinationCity,
+          destinationCountry: shipmentSlot.destinationCountry,
+          departureTime: shipmentSlot.departureTime,
+          arrivalTime: shipmentSlot.arrivalTime,
+          mode: shipmentSlot.mode,
+          price: Number(booking.calculatedPrice),
+          currency: 'gbp',
+        },
+        bookingForEmail.company.name,
+        bookingForEmail.company.contactEmail || undefined,
+        bookingForEmail.company.contactPhone || undefined
+      ).catch((err) => {
+        console.error('Failed to send booking confirmation email:', err);
+      });
+    }
+
+    // Notify customer about acceptance
+    await createNotification({
+      userId: booking.customerId,
+      type: 'BOOKING_ACCEPTED',
+      title: 'Booking Accepted',
+      body: `Your booking from ${shipmentSlot?.originCity || 'origin'} to ${shipmentSlot?.destinationCity || 'destination'} has been accepted`,
+      metadata: {
+        bookingId: booking.id,
+        shipmentSlotId: booking.shipmentSlotId,
+        status: 'ACCEPTED',
+      },
+    }).catch((err) => {
+      console.error('Failed to create customer notification:', err);
+    });
+
+    return updatedBooking;
   },
 
   async rejectBooking(req: AuthRequest, id: string, reason: string) {
@@ -541,16 +652,106 @@ export const bookingService = {
       });
     }
 
+    // Process refund if payment exists
+    let refundProcessed = false;
+    if (updatedBooking.payment && updatedBooking.payment.status === 'SUCCEEDED') {
+      try {
+        // Get Stripe charge ID from payment intent
+        const paymentIntent = await stripe.paymentIntents.retrieve(
+          updatedBooking.payment.stripePaymentIntentId
+        );
+        const chargeId = paymentIntent.latest_charge as string;
+
+        if (chargeId) {
+          const refundAmount = Number(updatedBooking.payment.amount);
+          const refundAmountInCents = Math.round(refundAmount * 100);
+
+          // Process full refund via Stripe
+          await stripe.refunds.create({
+            charge: chargeId,
+            amount: refundAmountInCents,
+            reason: 'requested_by_customer',
+            metadata: {
+              bookingId: booking.id,
+              refundReason: `Booking rejected: ${reason || 'No reason provided'}`,
+            },
+          });
+
+          // Update payment record
+          await prisma.payment.update({
+            where: { id: updatedBooking.payment.id },
+            data: {
+              status: 'REFUNDED',
+              refundedAmount: refundAmount,
+              refundReason: `Booking rejected: ${reason || 'No reason provided'}`,
+              refundedAt: new Date(),
+            },
+          });
+
+          // Update booking payment status
+          await prisma.booking.update({
+            where: { id: booking.id },
+            data: {
+              paymentStatus: 'REFUNDED',
+            },
+          });
+
+          refundProcessed = true;
+          console.log(`Refund processed for booking ${booking.id}: £${refundAmount.toFixed(2)}`);
+        }
+      } catch (refundError: any) {
+        console.error('Failed to process refund for rejected booking:', refundError);
+        // Don't throw - we still want to reject the booking even if refund fails
+        // The refund can be processed manually later
+      }
+    }
+
+    // Get customer details for email
+    const customer = await prisma.user.findUnique({
+      where: { id: booking.customerId },
+      select: {
+        email: true,
+        fullName: true,
+        notificationEmail: true,
+      },
+    });
+
+    // Send rejection email if customer has email notifications enabled
+    if (customer && customer.notificationEmail && shipmentSlot) {
+      await emailService.sendBookingRejectionEmail(
+        customer.email,
+        customer.fullName,
+        booking.id,
+        {
+          originCity: shipmentSlot.originCity,
+          originCountry: shipmentSlot.originCountry,
+          destinationCity: shipmentSlot.destinationCity,
+          destinationCountry: shipmentSlot.destinationCountry,
+          departureTime: shipmentSlot.departureTime,
+          arrivalTime: shipmentSlot.arrivalTime,
+          mode: shipmentSlot.mode,
+          price: Number(booking.calculatedPrice),
+          currency: 'gbp',
+        },
+        updatedBooking.shipmentSlot.company.name,
+        reason,
+        refundProcessed
+      ).catch((err) => {
+        console.error('Failed to send booking rejection email:', err);
+      });
+    }
+
     // Notify customer about rejection
     await createNotification({
       userId: booking.customerId,
       type: 'BOOKING_REJECTED',
       title: 'Booking Rejected',
-      body: `Your booking from ${shipmentSlot?.originCity || 'origin'} to ${shipmentSlot?.destinationCity || 'destination'} has been rejected. ${reason ? `Reason: ${reason}` : ''}`,
+      body: `Your booking from ${shipmentSlot?.originCity || 'origin'} to ${shipmentSlot?.destinationCity || 'destination'} has been rejected. ${reason ? `Reason: ${reason}` : ''}${refundProcessed ? ' A refund has been processed for your payment.' : ''}`,
       metadata: {
         bookingId: booking.id,
         shipmentSlotId: booking.shipmentSlotId,
         reason,
+        refunded: refundProcessed,
       },
     }).catch((err) => {
       console.error('Failed to create notification:', err);

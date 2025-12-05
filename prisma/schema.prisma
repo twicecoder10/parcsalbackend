@@ -213,7 +213,7 @@ model ShipmentSlot {
 }
 
 model Booking {
-  id                String        @id @default(uuid())
+  id                String        @id
   shipmentSlotId    String
   shipmentSlot      ShipmentSlot  @relation(fields: [shipmentSlotId], references: [id], onDelete: Cascade)
   customerId        String
@@ -239,7 +239,7 @@ model Booking {
 }
 
 model Payment {
-  id                   String                @id @default(uuid())
+  id                   String                @id
   bookingId            String                @unique
   booking              Booking               @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   stripePaymentIntentId String               @unique

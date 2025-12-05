@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { bookingIdValidator } from '../../utils/validators';
 
 const shipmentModeEnum = z.enum(['AIR', 'BUS', 'VAN', 'TRAIN', 'SHIP', 'RIDER']);
 const pricingModelEnum = z.enum(['PER_KG', 'PER_ITEM', 'FLAT']);
@@ -90,7 +91,7 @@ export const getShipmentSchema = z.object({
 
 export const trackShipmentByBookingSchema = z.object({
   params: z.object({
-    bookingId: z.string().uuid('Invalid booking ID'),
+    bookingId: bookingIdValidator,
   }),
 });
 

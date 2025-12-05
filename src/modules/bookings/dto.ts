@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { bookingIdValidator } from '../../utils/validators';
 
 const bookingStatusEnum = z.enum(['PENDING', 'ACCEPTED', 'REJECTED', 'CANCELLED', 'IN_TRANSIT', 'DELIVERED']);
 
@@ -13,7 +14,7 @@ export const createBookingSchema = z.object({
 
 export const updateBookingStatusSchema = z.object({
   params: z.object({
-    id: z.string().uuid(),
+    id: bookingIdValidator,
   }),
   body: z.object({
     status: bookingStatusEnum,
@@ -22,7 +23,7 @@ export const updateBookingStatusSchema = z.object({
 
 export const getBookingSchema = z.object({
   params: z.object({
-    id: z.string().uuid(),
+    id: bookingIdValidator,
   }),
 });
 

@@ -4,6 +4,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { PaginationParams } from '../../utils/pagination';
 
 export interface CreateBookingData {
+  id: string;
   shipmentSlotId: string;
   customerId: string;
   companyId: string;

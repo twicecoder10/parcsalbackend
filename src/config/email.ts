@@ -696,5 +696,168 @@ export const emailService = {
       html
     );
   },
+
+  async sendBookingRejectionEmail(
+    email: string,
+    customerName: string,
+    bookingId: string,
+    bookingDetails: {
+      originCity: string;
+      originCountry: string;
+      destinationCity: string;
+      destinationCountry: string;
+      departureTime: Date;
+      arrivalTime: Date;
+      mode: string;
+      price: number;
+      currency: string;
+    },
+    companyName: string,
+    reason?: string,
+    refunded?: boolean
+  ) {
+    const formattedPrice = new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: bookingDetails.currency.toUpperCase(),
+    }).format(bookingDetails.price);
+
+    const departureDate = new Intl.DateTimeFormat('en-GB', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(bookingDetails.departureTime));
+
+    const arrivalDate = new Intl.DateTimeFormat('en-GB', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(bookingDetails.arrivalTime));
+
+    const bookingUrl = `${config.frontendUrl}/bookings/${bookingId}`;
+
+    const html = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>Booking Rejected - Parcsal</title>
+      </head>
+      <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5; line-height: 1.6;">
+        <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f5f5; padding: 20px 0;">
+          <tr>
+            <td align="center" style="padding: 20px 0;">
+              <table role="presentation" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); overflow: hidden;">
+                <!-- Header -->
+                <tr>
+                  <td style="background: linear-gradient(135deg, #F44336 0%, #E57373 100%); padding: 40px 30px; text-align: center;">
+                    <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Booking Rejected</h1>
+                    <p style="margin: 12px 0 0 0; color: #ffffff; font-size: 16px; opacity: 0.9;">Your booking request was not accepted</p>
+                  </td>
+                </tr>
+                <!-- Content -->
+                <tr>
+                  <td style="padding: 40px 30px;">
+                    <p style="margin: 0 0 16px 0; color: #1A1A1A; font-size: 16px;">Hello ${customerName},</p>
+                    <p style="margin: 0 0 24px 0; color: #4A4A4A; font-size: 16px;">We regret to inform you that your booking request has been rejected by <strong>${companyName}</strong>.</p>
+                    
+                    ${reason ? `
+                    <div style="background-color: #FFEBEE; border-left: 4px solid #F44336; padding: 20px; margin: 24px 0; border-radius: 4px;">
+                      <h3 style="margin: 0 0 12px 0; color: #1A1A1A; font-size: 16px; font-weight: 600;">Reason for Rejection:</h3>
+                      <p style="margin: 0; color: #4A4A4A; font-size: 14px; white-space: pre-wrap;">${reason}</p>
+                    </div>
+                    ` : ''}
+                    
+                    <!-- Booking Details -->
+                    <div style="background-color: #F8F8F8; border-radius: 8px; padding: 24px; margin: 24px 0; border: 1px solid #EEEEEE;">
+                      <h2 style="margin: 0 0 20px 0; color: #1A1A1A; font-size: 18px; font-weight: 600;">Booking Information</h2>
+                      <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Booking ID:</strong>
+                            <span style="color: #4A4A4A; font-size: 13px; font-family: 'Courier New', monospace;">${bookingId}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Route:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${bookingDetails.originCity}, ${bookingDetails.originCountry} → ${bookingDetails.destinationCity}, ${bookingDetails.destinationCountry}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Mode:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px; text-transform: capitalize;">${bookingDetails.mode}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Departure:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${departureDate}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Arrival:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${arrivalDate}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Total Price:</strong>
+                            <span style="color: #4A4A4A; font-size: 16px; font-weight: 600;">${formattedPrice}</span>
+                          </td>
+                        </tr>
+                      </table>
+                    </div>
+
+                    ${refunded ? `
+                    <div style="background-color: #E8F5E9; border-left: 3px solid #4CAF50; padding: 16px; margin: 24px 0; border-radius: 4px;">
+                      <p style="margin: 0 0 8px 0; color: #2E7D32; font-size: 14px; font-weight: 600;">✓ Refund Processed</p>
+                      <p style="margin: 0; color: #2E7D32; font-size: 14px;">A full refund of ${formattedPrice} has been processed and will be credited back to your original payment method within 5-10 business days.</p>
+                    </div>
+                    ` : ''}
+                    
+                    <!-- CTA Button -->
+                    <table role="presentation" style="width: 100%; margin: 32px 0;">
+                      <tr>
+                        <td align="center" style="padding: 0;">
+                          <a href="${bookingUrl}" style="display: inline-block; background-color: #F44336; color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 600; font-size: 16px; text-align: center; box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3);">View Booking Details</a>
+                        </td>
+                      </tr>
+                    </table>
+                    
+                    <div style="background-color: #FFF3E0; border-left: 3px solid #FF9800; padding: 16px; margin: 24px 0; border-radius: 4px;">
+                      <p style="margin: 0 0 8px 0; color: #E65100; font-size: 14px; font-weight: 600;">ℹ️ What's Next?</p>
+                      <p style="margin: 0; color: #E65100; font-size: 14px;">You can search for other available shipments or contact the company directly if you have questions about this rejection.</p>
+                    </div>
+                  </td>
+                </tr>
+                <!-- Footer -->
+                <tr>
+                  <td style="background-color: #F8F8F8; padding: 24px 30px; text-align: center; border-top: 1px solid #EEEEEE;">
+                    <p style="margin: 0 0 8px 0; color: #999999; font-size: 12px;">© ${new Date().getFullYear()} Parcsal. All rights reserved.</p>
+                    <p style="margin: 0; color: #999999; font-size: 12px;">You're receiving this email because you have a booking on Parcsal.</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
+    `;
+
+    return this.sendEmail(
+      email,
+      `Booking Rejected - ${bookingDetails.originCity} to ${bookingDetails.destinationCity} - Parcsal`,
+      html
+    );
+  },
 };
 

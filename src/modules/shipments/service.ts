@@ -205,6 +205,24 @@ export const shipmentService = {
       throw new ForbiddenError('You do not have permission to update this shipment');
     }
 
+    // Check if there are any pending bookings when trying to change status
+    // Companies must accept or reject all pending bookings before changing shipment status
+    // Exception: CLOSED status is allowed as it will cancel pending bookings
+    if (dto.status !== 'CLOSED' && shipment.status !== dto.status) {
+      const pendingBookingsCount = await prisma.booking.count({
+        where: {
+          shipmentSlotId: id,
+          status: 'PENDING',
+        },
+      });
+
+      if (pendingBookingsCount > 0) {
+        throw new BadRequestError(
+          `Cannot update shipment status. There are ${pendingBookingsCount} pending booking(s). Please accept or reject all bookings first.`
+        );
+      }
+    }
+
     const oldStatus = shipment.status;
     const updatedShipment = await shipmentRepository.updateStatus(id, dto.status);
 

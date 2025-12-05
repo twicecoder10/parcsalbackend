@@ -1,8 +1,9 @@
 import { z } from 'zod';
+import { bookingIdValidator, paymentIdValidator } from '../../utils/validators';
 
 export const createCheckoutSessionSchema = z.object({
   body: z.object({
-    bookingId: z.string().uuid('Invalid booking ID'),
+    bookingId: bookingIdValidator,
   }),
 });
 
@@ -15,7 +16,7 @@ export const listCompanyPaymentsSchema = z.object({
     status: paymentStatusEnum.optional(),
     dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'dateFrom must be in YYYY-MM-DD format').optional(),
     dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'dateTo must be in YYYY-MM-DD format').optional(),
-    bookingId: z.string().uuid().optional(),
+    bookingId: bookingIdValidator.optional(),
     search: z.string().optional(),
   }),
 });
@@ -29,7 +30,7 @@ export const getPaymentStatsSchema = z.object({
 
 export const processRefundSchema = z.object({
   params: z.object({
-    paymentId: z.string().uuid('Invalid payment ID'),
+    paymentId: paymentIdValidator,
   }),
   body: z.object({
     amount: z.number().positive().optional(),
@@ -39,7 +40,16 @@ export const processRefundSchema = z.object({
 
 export const getPaymentByIdSchema = z.object({
   params: z.object({
-    paymentId: z.string().uuid('Invalid payment ID'),
+    paymentId: paymentIdValidator,
+  }),
+});
+
+export const syncPaymentStatusSchema = z.object({
+  params: z.object({
+    bookingId: bookingIdValidator,
+  }),
+  query: z.object({
+    session_id: z.string().optional(),
   }),
 });
 

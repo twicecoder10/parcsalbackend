@@ -2,6 +2,7 @@ import prisma from '../../config/database';
 import { Payment, PaymentTransactionStatus } from '@prisma/client';
 
 export interface CreatePaymentData {
+  id: string;
   bookingId: string;
   stripePaymentIntentId: string;
   amount: number;

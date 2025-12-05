@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { bookingIdValidator } from '../../utils/validators';
 
 export const completeCustomerOnboardingSchema = z.object({
   body: z.object({
@@ -45,13 +46,28 @@ export const getRecentBookingsSchema = z.object({
 
 export const cancelBookingSchema = z.object({
   params: z.object({
-    id: z.string().uuid('Invalid booking ID'),
+    id: bookingIdValidator,
   }),
 });
 
 export const trackShipmentSchema = z.object({
   params: z.object({
-    bookingId: z.string().uuid('Invalid booking ID'),
+    bookingId: bookingIdValidator,
+  }),
+});
+
+export const createPaymentSessionSchema = z.object({
+  params: z.object({
+    id: bookingIdValidator,
+  }),
+});
+
+export const syncPaymentStatusSchema = z.object({
+  params: z.object({
+    id: bookingIdValidator,
+  }),
+  query: z.object({
+    session_id: z.string().optional(),
   }),
 });
 

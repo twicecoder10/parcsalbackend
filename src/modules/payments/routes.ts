@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { paymentController } from './controller';
 import { authenticate, requireRole } from '../../middleware/auth';
 import { validate } from '../../middleware/validator';
-import { createCheckoutSessionSchema } from './dto';
+import { createCheckoutSessionSchema, syncPaymentStatusSchema } from './dto';
 
 const router = Router();
 
@@ -18,6 +18,7 @@ router.post(
 router.post(
   '/bookings/:bookingId/sync',
   authenticate,
+  validate(syncPaymentStatusSchema),
   paymentController.syncPaymentStatus
 );
 

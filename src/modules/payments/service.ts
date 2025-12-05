@@ -8,6 +8,7 @@ import prisma from '../../config/database';
 import { parsePagination, createPaginatedResponse } from '../../utils/pagination';
 import { createNotification, createCompanyNotification } from '../../utils/notifications';
 import { emailService } from '../../config/email';
+import { generatePaymentId } from '../../utils/paymentId';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -126,8 +127,12 @@ export const paymentService = {
       await paymentRepository.updateStatus(existingPayment.id, 'SUCCEEDED');
       await paymentRepository.updateBookingPaymentStatus(bookingId, 'PAID');
     } else {
+      // Generate custom payment ID
+      const paymentId = await generatePaymentId();
+      
       // Create new payment record
       const paymentData: CreatePaymentData = {
+        id: paymentId,
         bookingId,
         stripePaymentIntentId: paymentIntentId,
         amount: Number(paymentIntent.amount) / 100,
