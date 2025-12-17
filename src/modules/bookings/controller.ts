@@ -134,5 +134,33 @@ export const bookingController = {
       next(error);
     }
   },
+
+  async getBookingLabel(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const labelData = await bookingService.getBookingLabel(req, id);
+
+      res.status(200).json({
+        status: 'success',
+        data: labelData,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async regenerateBookingLabel(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const booking = await bookingService.regenerateBookingLabel(req, id);
+
+      res.status(200).json({
+        status: 'success',
+        data: booking,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 };
 

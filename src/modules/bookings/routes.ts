@@ -132,5 +132,35 @@ router.get(
   bookingController.getBookingById
 );
 
+// Company routes - Label management
+router.get(
+  '/:id/label',
+  authenticate,
+  requireCompanyAccess,
+  bookingController.getBookingLabel
+);
+
+router.post(
+  '/:id/label/regenerate',
+  authenticate,
+  requireCompanyAccess,
+  bookingController.regenerateBookingLabel
+);
+
+// Company route - Label management (alternative path)
+router.get(
+  '/company/:id/label',
+  authenticate,
+  requireCompanyAccess,
+  bookingController.getBookingLabel
+);
+
+router.post(
+  '/company/:id/label/regenerate',
+  authenticate,
+  requireCompanyAccess,
+  bookingController.regenerateBookingLabel
+);
+
 export default router;
 

@@ -48,7 +48,7 @@ export async function ensureContainerExists(): Promise<void> {
 export async function uploadToAzure(
   buffer: Buffer,
   originalFilename: string,
-  type: 'parcel' | 'proof'
+  type: 'parcel' | 'proof' | 'label'
 ): Promise<{ filename: string; url: string }> {
   await ensureContainerExists();
   
@@ -102,6 +102,7 @@ function getContentType(extension: string): string {
     '.png': 'image/png',
     '.webp': 'image/webp',
     '.gif': 'image/gif',
+    '.pdf': 'application/pdf',
   };
 
   return contentTypes[extension.toLowerCase()] || 'application/octet-stream';

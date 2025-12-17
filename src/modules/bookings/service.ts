@@ -12,6 +12,7 @@ import Stripe from 'stripe';
 import { config } from '../../config/env';
 import { generateBookingId } from '../../utils/bookingId';
 import { deleteImagesByUrls } from '../../utils/upload';
+import { generateShippingLabel } from '../../utils/labelGenerator';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -670,6 +671,29 @@ export const bookingService = {
 
     const updatedBooking = await bookingRepository.updateStatus(id, 'ACCEPTED');
 
+    // Generate and upload shipping label
+    try {
+      // Get full booking details with all relations needed for label
+      const bookingForLabel = await prisma.booking.findUnique({
+        where: { id: booking.id },
+        include: {
+          shipmentSlot: true,
+          customer: true,
+          company: true,
+          pickupWarehouse: true,
+          deliveryWarehouse: true,
+        },
+      });
+
+      if (bookingForLabel) {
+        const labelResult = await generateShippingLabel(bookingForLabel);
+        await bookingRepository.updateLabelUrl(booking.id, labelResult.url);
+      }
+    } catch (labelError: any) {
+      // Log error but don't fail the acceptance - label can be regenerated later
+      console.error(`Failed to generate label for booking ${booking.id}:`, labelError);
+    }
+
     // Get shipment slot details for email
     const shipmentSlot = await prisma.shipmentSlot.findUnique({
       where: { id: booking.shipmentSlotId },
@@ -1015,6 +1039,79 @@ export const bookingService = {
       dto.pickupProofImages || [],
       dto.deliveryProofImages || []
     );
+
+    return updatedBooking;
+  },
+
+  async getBookingLabel(req: AuthRequest, id: string) {
+    const booking = await bookingRepository.findById(id);
+    if (!booking) {
+      throw new NotFoundError('Booking not found');
+    }
+
+    // Verify ownership - only company can access labels
+    if (!req.user) {
+      throw new ForbiddenError('Authentication required');
+    }
+
+    const isCompanyOwner = booking.companyId === req.user.companyId;
+    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+
+    if (!isCompanyOwner && !isSuperAdmin) {
+      throw new ForbiddenError('You do not have permission to access this booking label');
+    }
+
+    if (!booking.labelUrl) {
+      throw new BadRequestError('Label has not been generated for this booking yet');
+    }
+
+    return {
+      labelUrl: booking.labelUrl,
+      bookingId: booking.id,
+    };
+  },
+
+  async regenerateBookingLabel(req: AuthRequest, id: string) {
+    const booking = await bookingRepository.findById(id);
+    if (!booking) {
+      throw new NotFoundError('Booking not found');
+    }
+
+    // Verify ownership - only company can regenerate labels
+    if (!req.user) {
+      throw new ForbiddenError('Authentication required');
+    }
+
+    const isCompanyOwner = booking.companyId === req.user.companyId;
+    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+
+    if (!isCompanyOwner && !isSuperAdmin) {
+      throw new ForbiddenError('You do not have permission to regenerate this booking label');
+    }
+
+    // Only regenerate for accepted bookings
+    if (booking.status !== 'ACCEPTED') {
+      throw new BadRequestError('Labels can only be generated for accepted bookings');
+    }
+
+    // Get full booking details with all relations needed for label
+    const bookingForLabel = await prisma.booking.findUnique({
+      where: { id: booking.id },
+      include: {
+        shipmentSlot: true,
+        customer: true,
+        company: true,
+        pickupWarehouse: true,
+        deliveryWarehouse: true,
+      },
+    });
+
+    if (!bookingForLabel) {
+      throw new NotFoundError('Booking not found');
+    }
+
+    const labelResult = await generateShippingLabel(bookingForLabel);
+    const updatedBooking = await bookingRepository.updateLabelUrl(booking.id, labelResult.url);
 
     return updatedBooking;
   },

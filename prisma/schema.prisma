@@ -308,6 +308,8 @@ model Booking {
   // Proof images for companies
   pickupProofImages   String[]      @default([]) // Array of proof of pickup image URLs
   deliveryProofImages String[]      @default([]) // Array of proof of delivery image URLs
+  // Label for printing
+  labelUrl           String?       // URL to the printable shipping label PDF
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 

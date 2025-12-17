@@ -98,6 +98,9 @@ export const bookingRepository = {
           },
         },
         payment: true,
+        pickupWarehouse: true,
+        deliveryWarehouse: true,
+        company: true,
       },
     });
   },
@@ -341,6 +344,35 @@ export const bookingRepository = {
         pickupProofImages: updatedPickupProofImages,
         deliveryProofImages: updatedDeliveryProofImages,
       },
+      include: {
+        shipmentSlot: {
+          include: {
+            company: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                isVerified: true,
+              },
+            },
+          },
+        },
+        customer: {
+          select: {
+            id: true,
+            email: true,
+            fullName: true,
+          },
+        },
+        payment: true,
+      },
+    });
+  },
+
+  async updateLabelUrl(id: string, labelUrl: string): Promise<Booking> {
+    return prisma.booking.update({
+      where: { id },
+      data: { labelUrl },
       include: {
         shipmentSlot: {
           include: {
