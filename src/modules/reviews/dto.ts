@@ -29,7 +29,7 @@ export const getReviewSchema = z.object({
 
 export const getCompanyReviewsSchema = z.object({
   params: z.object({
-    companyId: z.string().uuid('Invalid company ID'),
+    companyIdOrSlug: z.string().min(1, 'Company ID or slug is required'),
   }),
   query: z.object({
     limit: z.string().optional(),
@@ -42,6 +42,14 @@ export const getMyReviewsSchema = z.object({
   query: z.object({
     limit: z.string().optional(),
     offset: z.string().optional(),
+  }),
+});
+
+export const getMyCompanyReviewsSchema = z.object({
+  query: z.object({
+    limit: z.string().optional(),
+    offset: z.string().optional(),
+    rating: z.string().optional(),
   }),
 });
 

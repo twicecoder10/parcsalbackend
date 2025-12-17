@@ -8,6 +8,7 @@ import {
   getReviewSchema,
   getCompanyReviewsSchema,
   getMyReviewsSchema,
+  getMyCompanyReviewsSchema,
   replyToReviewSchema,
 } from './dto';
 
@@ -49,18 +50,34 @@ router.get(
   reviewController.getReview
 );
 
+// Company routes (authenticated) - MUST come before parameterized routes
 router.get(
-  '/companies/:companyId/reviews',
+  '/companies/me/reviews',
+  authenticate,
+  requireCompanyAccess,
+  validate(getMyCompanyReviewsSchema),
+  reviewController.getMyCompanyReviews
+);
+
+router.get(
+  '/companies/me/reviews/stats',
+  authenticate,
+  requireCompanyAccess,
+  reviewController.getMyCompanyReviewStats
+);
+
+// Public company routes (parameterized) - MUST come after /me routes
+router.get(
+  '/companies/:companyIdOrSlug/reviews',
   validate(getCompanyReviewsSchema),
   reviewController.getCompanyReviews
 );
 
 router.get(
-  '/companies/:companyId/reviews/stats',
+  '/companies/:companyIdOrSlug/reviews/stats',
   reviewController.getCompanyReviewStats
 );
 
-// Company routes (authenticated)
 router.post(
   '/companies/bookings/:bookingId/reviews/reply',
   authenticate,

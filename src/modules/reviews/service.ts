@@ -5,6 +5,7 @@ import { AuthRequest } from '../../middleware/auth';
 import { parsePagination, createPaginatedResponse } from '../../utils/pagination';
 import { bookingRepository } from '../bookings/repository';
 import { BookingStatus } from '@prisma/client';
+import prisma from '../../config/database';
 
 const ALLOWED_BOOKING_STATUSES: BookingStatus[] = ['REJECTED', 'CANCELLED', 'DELIVERED'];
 
@@ -22,6 +23,11 @@ export const reviewService = {
 
     if (booking.customerId !== req.user.id) {
       throw new ForbiddenError('You can only review your own bookings');
+    }
+
+    // Validate companyId exists
+    if (!booking.companyId) {
+      throw new BadRequestError('Booking is not associated with a company');
     }
 
     // Check if booking status allows reviews
@@ -78,7 +84,24 @@ export const reviewService = {
     return review;
   },
 
-  async getCompanyReviews(companyId: string, query: any) {
+  async getCompanyReviews(companyIdOrSlug: string, query: any) {
+    // Try to find company by ID or slug
+    const company = await prisma.company.findFirst({
+      where: {
+        OR: [
+          { id: companyIdOrSlug },
+          { slug: companyIdOrSlug },
+        ],
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
     const pagination = parsePagination(query);
     const rating = query.rating ? parseInt(query.rating, 10) : undefined;
 
@@ -86,7 +109,7 @@ export const reviewService = {
       throw new BadRequestError('Rating must be between 1 and 5');
     }
 
-    const { reviews, total } = await reviewRepository.findByCompany(companyId, {
+    const { reviews, total } = await reviewRepository.findByCompany(company.id, {
       ...pagination,
       rating,
     });
@@ -126,10 +149,63 @@ export const reviewService = {
     return { message: 'Review deleted successfully' };
   },
 
-  async getCompanyReviewStats(companyId: string) {
+  async getCompanyReviewStats(companyIdOrSlug: string) {
+    // Try to find company by ID or slug
+    const company = await prisma.company.findFirst({
+      where: {
+        OR: [
+          { id: companyIdOrSlug },
+          { slug: companyIdOrSlug },
+        ],
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
     const [averageRating, reviewCount] = await Promise.all([
-      reviewRepository.getCompanyAverageRating(companyId),
-      reviewRepository.getCompanyReviewCount(companyId),
+      reviewRepository.getCompanyAverageRating(company.id),
+      reviewRepository.getCompanyReviewCount(company.id),
+    ]);
+
+    return {
+      averageRating: averageRating ? Number(averageRating.toFixed(2)) : null,
+      reviewCount,
+    };
+  },
+
+  async getMyCompanyReviews(req: AuthRequest, query: any) {
+    if (!req.user || !req.user.companyId) {
+      throw new ForbiddenError('User must be associated with a company');
+    }
+
+    const pagination = parsePagination(query);
+    const rating = query.rating ? parseInt(query.rating, 10) : undefined;
+
+    if (rating !== undefined && (rating < 1 || rating > 5)) {
+      throw new BadRequestError('Rating must be between 1 and 5');
+    }
+
+    const { reviews, total } = await reviewRepository.findByCompany(req.user.companyId, {
+      ...pagination,
+      rating,
+    });
+
+    return createPaginatedResponse(reviews, total, pagination);
+  },
+
+  async getMyCompanyReviewStats(req: AuthRequest) {
+    if (!req.user || !req.user.companyId) {
+      throw new ForbiddenError('User must be associated with a company');
+    }
+
+    const [averageRating, reviewCount] = await Promise.all([
+      reviewRepository.getCompanyAverageRating(req.user.companyId),
+      reviewRepository.getCompanyReviewCount(req.user.companyId),
     ]);
 
     return {
