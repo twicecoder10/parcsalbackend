@@ -8,6 +8,7 @@ import {
   getBookingSchema,
   listBookingsSchema,
   addProofImagesSchema,
+  scanBarcodeSchema,
 } from './dto';
 
 const router = Router();
@@ -160,6 +161,24 @@ router.post(
   authenticate,
   requireCompanyAccess,
   bookingController.regenerateBookingLabel
+);
+
+// Company route - Scan barcode
+router.post(
+  '/scan',
+  authenticate,
+  requireCompanyAccess,
+  validate(scanBarcodeSchema),
+  bookingController.scanBarcode
+);
+
+// Company route - Scan barcode (alternative path)
+router.post(
+  '/company/scan',
+  authenticate,
+  requireCompanyAccess,
+  validate(scanBarcodeSchema),
+  bookingController.scanBarcode
 );
 
 export default router;

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { paymentController } from './controller';
 import { authenticate, requireCompanyAccess } from '../../middleware/auth';
 import { validate } from '../../middleware/validator';
+import { requireStaffPermission } from '../../utils/permissions';
 import {
   listCompanyPaymentsSchema,
   getPaymentByIdSchema,
@@ -16,6 +17,7 @@ router.get(
   '/',
   authenticate,
   requireCompanyAccess,
+  requireStaffPermission('viewPayments'),
   validate(listCompanyPaymentsSchema),
   paymentController.getCompanyPayments
 );
@@ -25,6 +27,7 @@ router.get(
   '/stats',
   authenticate,
   requireCompanyAccess,
+  requireStaffPermission('viewPaymentStats'),
   validate(getPaymentStatsSchema),
   paymentController.getCompanyPaymentStats
 );
@@ -34,6 +37,7 @@ router.get(
   '/:paymentId',
   authenticate,
   requireCompanyAccess,
+  requireStaffPermission('viewPayments'),
   validate(getPaymentByIdSchema),
   paymentController.getCompanyPaymentById
 );
@@ -43,6 +47,7 @@ router.post(
   '/:paymentId/refund',
   authenticate,
   requireCompanyAccess,
+  requireStaffPermission('processRefund'),
   validate(processRefundSchema),
   paymentController.processRefund
 );

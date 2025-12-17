@@ -11,6 +11,8 @@ import { config } from '../../config/env';
 import { deleteImageByUrl } from '../../utils/upload';
 import { createNotification, createCompanyNotification } from '../../utils/notifications';
 import { reviewRepository } from '../reviews/repository';
+import { checkStaffPermission } from '../../utils/permissions';
+import { InvitationStatus } from '@prisma/client';
 
 export const companyService = {
   async getMyCompany(req: AuthRequest) {
@@ -155,6 +157,9 @@ export const companyService = {
 
   // Overview/Dashboard methods
   async getOverviewStats(req: AuthRequest) {
+    // Check staff permission
+    await checkStaffPermission(req, 'viewAnalytics');
+
     if (!req.user || !req.user.companyId) {
       throw new ForbiddenError('User must be associated with a company');
     }
@@ -298,6 +303,9 @@ export const companyService = {
   },
 
   async getRecentBookings(req: AuthRequest, limit: number = 5) {
+    // Check staff permission
+    await checkStaffPermission(req, 'viewBookings');
+
     if (!req.user || !req.user.companyId) {
       throw new ForbiddenError('User must be associated with a company');
     }
@@ -349,6 +357,9 @@ export const companyService = {
   },
 
   async getUpcomingShipments(req: AuthRequest, limit: number = 5) {
+    // Check staff permission
+    await checkStaffPermission(req, 'viewShipments');
+
     if (!req.user || !req.user.companyId) {
       throw new ForbiddenError('User must be associated with a company');
     }
@@ -388,6 +399,9 @@ export const companyService = {
 
   // Analytics
   async getAnalytics(req: AuthRequest, period: 'week' | 'month' | 'quarter' | 'year') {
+    // Check staff permission
+    await checkStaffPermission(req, 'viewAnalytics');
+
     if (!req.user || !req.user.companyId) {
       throw new ForbiddenError('User must be associated with a company');
     }
@@ -892,6 +906,53 @@ export const companyService = {
     }));
   },
 
+  async getInvitations(req: AuthRequest) {
+    if (!req.user || !req.user.companyId) {
+      throw new ForbiddenError('User must be associated with a company');
+    }
+
+    // Check if user is company admin
+    if (req.user.role !== 'COMPANY_ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenError('Only company admins can view invitations');
+    }
+
+    // Expire old invitations first
+    await invitationRepository.expireOldInvitations();
+
+    // Get optional status filter from query params
+    const status = req.query?.status as string | undefined;
+    const validStatuses = ['PENDING', 'ACCEPTED', 'EXPIRED', 'CANCELLED'];
+    
+    if (status && !validStatuses.includes(status)) {
+      throw new BadRequestError(`Invalid status. Must be one of: ${validStatuses.join(', ')}`);
+    }
+
+    const invitations = await invitationRepository.findByCompany(
+      req.user.companyId,
+      status as InvitationStatus | undefined
+    );
+
+    return invitations.map((invitation: any) => ({
+      id: invitation.id,
+      email: invitation.email,
+      role: invitation.role,
+      status: invitation.status,
+      invitedAt: invitation.createdAt,
+      expiresAt: invitation.expiresAt,
+      acceptedAt: invitation.acceptedAt,
+      invitedBy: invitation.invitedBy ? {
+        id: invitation.invitedBy.id,
+        name: invitation.invitedBy.fullName,
+        email: invitation.invitedBy.email,
+      } : null,
+      acceptedBy: invitation.acceptedBy ? {
+        id: invitation.acceptedBy.id,
+        name: invitation.acceptedBy.fullName,
+        email: invitation.acceptedBy.email,
+      } : null,
+    }));
+  },
+
   async cancelInvitation(req: AuthRequest, invitationId: string) {
     if (!req.user || !req.user.companyId) {
       throw new ForbiddenError('User must be associated with a company');
@@ -902,39 +963,38 @@ export const companyService = {
       throw new ForbiddenError('Only company admins can cancel invitations');
     }
 
-    const invitation = await invitationRepository.findByToken(invitationId);
+    // Try finding by ID first (more reliable)
+    let invitation = await prisma.teamInvitation.findUnique({
+      where: { id: invitationId },
+    });
+
+    // If not found by ID, try finding by token
     if (!invitation) {
-      // Try finding by ID
-      const invitationById = await prisma.teamInvitation.findUnique({
-        where: { id: invitationId },
-      });
-
-      if (!invitationById) {
-        throw new NotFoundError('Invitation not found');
-      }
-
-      if (invitationById.companyId !== req.user.companyId) {
-        throw new ForbiddenError('You do not have permission to cancel this invitation');
-      }
-
-      if (invitationById.status !== 'PENDING') {
-        throw new BadRequestError('Only pending invitations can be cancelled');
-      }
-
-      await invitationRepository.updateStatus(invitationById.id, 'CANCELLED');
-      return { message: 'Invitation cancelled successfully' };
+      invitation = await invitationRepository.findByToken(invitationId);
     }
 
+    if (!invitation) {
+      throw new NotFoundError('Invitation not found');
+    }
+
+    // Verify the invitation belongs to the user's company
     if (invitation.companyId !== req.user.companyId) {
       throw new ForbiddenError('You do not have permission to cancel this invitation');
     }
 
-    if (invitation.status !== 'PENDING') {
-      throw new BadRequestError('Only pending invitations can be cancelled');
+    // Allow revoking any invitation that hasn't been accepted
+    // This includes PENDING, EXPIRED, and already CANCELLED (idempotent)
+    if (invitation.status === 'ACCEPTED') {
+      throw new BadRequestError('Cannot revoke an accepted invitation');
+    }
+
+    // If already cancelled, return success (idempotent operation)
+    if (invitation.status === 'CANCELLED') {
+      return { message: 'Invitation is already revoked' };
     }
 
     await invitationRepository.updateStatus(invitation.id, 'CANCELLED');
-    return { message: 'Invitation cancelled successfully' };
+    return { message: 'Invitation revoked successfully' };
   },
 
   // Company Settings
@@ -1206,6 +1266,262 @@ export const companyService = {
     });
 
     return warehouseAddresses;
+  },
+
+  // Get current user's restrictions (for frontend layout)
+  async getMyRestrictions(req: AuthRequest) {
+    if (!req.user) {
+      throw new ForbiddenError('Authentication required');
+    }
+
+    // Admins and super admins have no restrictions
+    if (req.user.role === 'COMPANY_ADMIN' || req.user.role === 'SUPER_ADMIN') {
+      // Return all actions as enabled for admins
+      const allActionsEnabled: Record<string, boolean> = {
+        createShipment: true,
+        updateShipment: true,
+        deleteShipment: true,
+        updateShipmentStatus: true,
+        updateShipmentTrackingStatus: true,
+        acceptBooking: true,
+        rejectBooking: true,
+        updateBookingStatus: true,
+        addProofImages: true,
+        regenerateLabel: true,
+        replyToReview: true,
+        viewAnalytics: true,
+        viewBookings: true,
+        viewShipments: true,
+        viewPayments: true,
+        viewPaymentStats: true,
+        processRefund: true,
+      };
+      return {
+        restrictions: allActionsEnabled,
+        isAdmin: true,
+      };
+    }
+
+    // For staff, get their specific restrictions
+    if (req.user.role === 'COMPANY_STAFF') {
+      const user = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { restrictions: true },
+      });
+
+      if (!user) {
+        throw new NotFoundError('User not found');
+      }
+
+      // Default restrictions - all actions enabled by default
+      const defaultRestrictions: Record<string, boolean> = {
+        createShipment: true,
+        updateShipment: true,
+        deleteShipment: true,
+        updateShipmentStatus: true,
+        updateShipmentTrackingStatus: true,
+        acceptBooking: true,
+        rejectBooking: true,
+        updateBookingStatus: true,
+        addProofImages: true,
+        regenerateLabel: true,
+        replyToReview: true,
+        viewAnalytics: true,
+        viewBookings: true,
+        viewShipments: true,
+        viewPayments: true,
+        viewPaymentStats: true,
+        processRefund: true,
+      };
+
+      const restrictions = (user.restrictions as Record<string, boolean> | null) || {};
+      
+      // Merge with defaults - if a restriction is not set, it defaults to true (enabled)
+      const mergedRestrictions: Record<string, boolean> = {};
+      Object.keys(defaultRestrictions).forEach((action) => {
+        mergedRestrictions[action] = restrictions[action] !== undefined ? restrictions[action] : defaultRestrictions[action];
+      });
+
+      return {
+        restrictions: mergedRestrictions,
+        isAdmin: false,
+      };
+    }
+
+    // For other roles (like CUSTOMER), return empty restrictions
+    return {
+      restrictions: {},
+      isAdmin: false,
+    };
+  },
+
+  // Staff Restrictions Management (per staff member)
+  async getStaffRestrictions(req: AuthRequest, memberId: string) {
+    if (!req.user || !req.user.companyId) {
+      throw new ForbiddenError('User must be associated with a company');
+    }
+
+    // Check if user is company admin
+    if (req.user.role !== 'COMPANY_ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenError('Only company admins can view staff restrictions');
+    }
+
+    // Get the staff member
+    const member = await prisma.user.findUnique({
+      where: { id: memberId },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        role: true,
+        companyId: true,
+        restrictions: true,
+      },
+    });
+
+    if (!member) {
+      throw new NotFoundError('Staff member not found');
+    }
+
+    // Verify the member belongs to the same company
+    if (member.companyId !== req.user.companyId) {
+      throw new ForbiddenError('You do not have permission to view restrictions for this staff member');
+    }
+
+    // Verify the member is actually a staff member
+    if (member.role !== 'COMPANY_STAFF' && member.role !== 'COMPANY_ADMIN') {
+      throw new BadRequestError('User is not a staff member');
+    }
+
+    // Default restrictions - all actions enabled by default
+    const defaultRestrictions: Record<string, boolean> = {
+      createShipment: true,
+      updateShipment: true,
+      deleteShipment: true,
+      updateShipmentStatus: true,
+      updateShipmentTrackingStatus: true,
+      acceptBooking: true,
+      rejectBooking: true,
+      updateBookingStatus: true,
+      addProofImages: true,
+      regenerateLabel: true,
+      replyToReview: true,
+      viewAnalytics: true,
+      viewBookings: true,
+      viewShipments: true,
+      viewPayments: true,
+      viewPaymentStats: true,
+      processRefund: true,
+    };
+
+    const restrictions = (member.restrictions as Record<string, boolean> | null) || {};
+    
+    // Merge with defaults - if a restriction is not set, it defaults to true (enabled)
+    const mergedRestrictions: Record<string, boolean> = {};
+    Object.keys(defaultRestrictions).forEach((action) => {
+      mergedRestrictions[action] = restrictions[action] !== undefined ? restrictions[action] : defaultRestrictions[action];
+    });
+
+    return {
+      member: {
+        id: member.id,
+        email: member.email,
+        name: member.fullName,
+        role: member.role,
+      },
+      restrictions: mergedRestrictions,
+    };
+  },
+
+  async updateStaffRestrictions(req: AuthRequest, memberId: string, restrictions: Record<string, boolean>) {
+    if (!req.user || !req.user.companyId) {
+      throw new ForbiddenError('User must be associated with a company');
+    }
+
+    // Check if user is company admin
+    if (req.user.role !== 'COMPANY_ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenError('Only company admins can update staff restrictions');
+    }
+
+    // Get the staff member
+    const member = await prisma.user.findUnique({
+      where: { id: memberId },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        role: true,
+        companyId: true,
+        restrictions: true,
+      },
+    });
+
+    if (!member) {
+      throw new NotFoundError('Staff member not found');
+    }
+
+    // Verify the member belongs to the same company
+    if (member.companyId !== req.user.companyId) {
+      throw new ForbiddenError('You do not have permission to update restrictions for this staff member');
+    }
+
+    // Verify the member is actually a staff member
+    if (member.role !== 'COMPANY_STAFF' && member.role !== 'COMPANY_ADMIN') {
+      throw new BadRequestError('User is not a staff member');
+    }
+
+    // Prevent admins from having restrictions
+    if (member.role === 'COMPANY_ADMIN') {
+      throw new BadRequestError('Admins cannot have restrictions applied');
+    }
+
+    // Validate restriction keys
+    const validActions = [
+      'createShipment',
+      'updateShipment',
+      'deleteShipment',
+      'updateShipmentStatus',
+      'updateShipmentTrackingStatus',
+      'acceptBooking',
+      'rejectBooking',
+      'updateBookingStatus',
+      'addProofImages',
+      'regenerateLabel',
+      'replyToReview',
+      'viewAnalytics',
+      'viewBookings',
+      'viewShipments',
+      'viewPayments',
+      'viewPaymentStats',
+      'processRefund',
+    ];
+
+    const invalidActions = Object.keys(restrictions).filter((key) => !validActions.includes(key));
+    if (invalidActions.length > 0) {
+      throw new BadRequestError(`Invalid action keys: ${invalidActions.join(', ')}`);
+    }
+
+    // Get current restrictions and merge with new ones
+    const currentRestrictions = (member.restrictions as Record<string, boolean> | null) || {};
+    const updatedRestrictions = { ...currentRestrictions, ...restrictions };
+
+    // Update user with new restrictions
+    await prisma.user.update({
+      where: { id: memberId },
+      data: {
+        restrictions: updatedRestrictions as any,
+      },
+    });
+
+    return {
+      member: {
+        id: member.id,
+        email: member.email,
+        name: member.fullName,
+        role: member.role,
+      },
+      restrictions: updatedRestrictions,
+    };
   },
 
   // Public method to get company profile with limited info

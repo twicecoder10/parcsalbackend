@@ -103,7 +103,14 @@ export const addProofImagesSchema = z.object({
   }),
 });
 
+export const scanBarcodeSchema = z.object({
+  body: z.object({
+    barcode: z.string().min(1, 'Barcode is required'),
+  }),
+});
+
 export type CreateBookingDto = z.infer<typeof createBookingSchema>['body'];
 export type UpdateBookingStatusDto = z.infer<typeof updateBookingStatusSchema>['body'];
 export type AddProofImagesDto = z.infer<typeof addProofImagesSchema>['body'];
+export type ScanBarcodeDto = z.infer<typeof scanBarcodeSchema>['body'];
 

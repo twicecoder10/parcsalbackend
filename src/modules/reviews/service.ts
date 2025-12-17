@@ -6,6 +6,7 @@ import { parsePagination, createPaginatedResponse } from '../../utils/pagination
 import { bookingRepository } from '../bookings/repository';
 import { BookingStatus } from '@prisma/client';
 import prisma from '../../config/database';
+import { checkStaffPermission } from '../../utils/permissions';
 
 const ALLOWED_BOOKING_STATUSES: BookingStatus[] = ['REJECTED', 'CANCELLED', 'DELIVERED'];
 
@@ -215,6 +216,9 @@ export const reviewService = {
   },
 
   async replyToReview(req: AuthRequest, bookingId: string, reply: string) {
+    // Check staff permission
+    await checkStaffPermission(req, 'replyToReview');
+
     if (!req.user || (req.user.role !== 'COMPANY_ADMIN' && req.user.role !== 'COMPANY_STAFF')) {
       throw new ForbiddenError('Only company users can reply to reviews');
     }

@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { bookingService } from './service';
-import { CreateBookingDto, UpdateBookingStatusDto, AddProofImagesDto } from './dto';
+import { CreateBookingDto, UpdateBookingStatusDto, AddProofImagesDto, ScanBarcodeDto } from './dto';
 import { AuthRequest } from '../../middleware/auth';
 
 export const bookingController = {
@@ -157,6 +157,21 @@ export const bookingController = {
       res.status(200).json({
         status: 'success',
         data: booking,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async scanBarcode(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const dto = req.body as ScanBarcodeDto;
+      const booking = await bookingService.scanBarcode(req, dto.barcode);
+
+      res.status(200).json({
+        status: 'success',
+        data: booking,
+        message: 'Barcode scanned successfully',
       });
     } catch (error) {
       next(error);

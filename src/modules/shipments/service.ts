@@ -9,9 +9,13 @@ import { bookingRepository } from '../bookings/repository';
 import { BookingStatus } from '@prisma/client';
 import { createShipmentCustomerNotifications } from '../../utils/notifications';
 import { emailService } from '../../config/email';
+import { checkStaffPermission } from '../../utils/permissions';
 
 export const shipmentService = {
   async createShipment(req: AuthRequest, dto: CreateShipmentDto) {
+    // Check staff permission
+    await checkStaffPermission(req, 'createShipment');
+
     if (!req.user || !req.user.companyId) {
       throw new ForbiddenError('User must be associated with a company');
     }
@@ -122,6 +126,9 @@ export const shipmentService = {
   },
 
   async getMyShipments(req: AuthRequest, query: any) {
+    // Check staff permission
+    await checkStaffPermission(req, 'viewShipments');
+
     if (!req.user || !req.user.companyId) {
       throw new ForbiddenError('User must be associated with a company');
     }
@@ -140,6 +147,9 @@ export const shipmentService = {
   },
 
   async updateShipment(req: AuthRequest, id: string, dto: UpdateShipmentDto) {
+    // Check staff permission
+    await checkStaffPermission(req, 'updateShipment');
+
     // Verify ownership
     const shipment = await shipmentRepository.findById(id);
     if (!shipment) {
@@ -196,6 +206,9 @@ export const shipmentService = {
   },
 
   async updateShipmentStatus(req: AuthRequest, id: string, dto: UpdateShipmentStatusDto) {
+    // Check staff permission
+    await checkStaffPermission(req, 'updateShipmentStatus');
+
     // Verify ownership
     const shipment = await shipmentRepository.findById(id);
     if (!shipment) {
@@ -277,6 +290,9 @@ export const shipmentService = {
   },
 
   async updateShipmentTrackingStatus(req: AuthRequest, id: string, dto: UpdateShipmentTrackingStatusDto) {
+    // Check staff permission
+    await checkStaffPermission(req, 'updateShipmentTrackingStatus');
+
     // Verify ownership
     const shipment = await shipmentRepository.findById(id);
     if (!shipment) {
@@ -644,6 +660,9 @@ export const shipmentService = {
   },
 
   async deleteShipment(req: AuthRequest, id: string) {
+    // Check staff permission
+    await checkStaffPermission(req, 'deleteShipment');
+
     const shipment = await shipmentRepository.findById(id);
     if (!shipment) {
       throw new NotFoundError('Shipment not found');

@@ -87,9 +87,26 @@ export const getPublicCompanyProfileSchema = z.object({
   }),
 });
 
+// Staff Restrictions
+export const staffRestrictionsSchema = z.object({
+  params: z.object({
+    memberId: z.string().uuid('Invalid member ID'),
+  }),
+  body: z.object({
+    restrictions: z.record(z.string(), z.boolean()).optional(),
+  }),
+});
+
+export const getStaffRestrictionsSchema = z.object({
+  params: z.object({
+    memberId: z.string().uuid('Invalid member ID'),
+  }),
+});
+
 export type UpdateCompanyDto = z.infer<typeof updateCompanySchema>['body'];
 export type VerifyCompanyDto = z.infer<typeof verifyCompanySchema>['body'];
 export type CompleteCompanyOnboardingDto = z.infer<typeof completeCompanyOnboardingSchema>['body'];
 export type CreateWarehouseAddressDto = z.infer<typeof createWarehouseAddressSchema>['body'];
 export type UpdateWarehouseAddressDto = z.infer<typeof updateWarehouseAddressSchema>['body'];
+export type StaffRestrictionsDto = z.infer<typeof staffRestrictionsSchema>['body'];
 

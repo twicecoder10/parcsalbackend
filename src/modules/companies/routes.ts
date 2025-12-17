@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { companyController } from './controller';
 import { authenticate, requireCompanyAccess } from '../../middleware/auth';
 import { validate } from '../../middleware/validator';
-import { updateCompanySchema, completeCompanyOnboardingSchema, createWarehouseAddressSchema, updateWarehouseAddressSchema, deleteWarehouseAddressSchema, getCompanyWarehousesSchema, getPublicCompanyProfileSchema } from './dto';
+import { updateCompanySchema, completeCompanyOnboardingSchema, createWarehouseAddressSchema, updateWarehouseAddressSchema, deleteWarehouseAddressSchema, getCompanyWarehousesSchema, getPublicCompanyProfileSchema, staffRestrictionsSchema } from './dto';
 
 const router = Router();
 
@@ -113,6 +113,30 @@ router.put(
   companyController.updateSettings
 );
 
+// Get current user's restrictions (for frontend layout)
+router.get(
+  '/me/restrictions',
+  authenticate,
+  requireCompanyAccess,
+  companyController.getMyRestrictions
+);
+
+// Staff Restrictions Management (per staff member)
+router.get(
+  '/team/:memberId/restrictions',
+  authenticate,
+  requireCompanyAccess,
+  companyController.getStaffRestrictions
+);
+
+router.put(
+  '/team/:memberId/restrictions',
+  authenticate,
+  requireCompanyAccess,
+  validate(staffRestrictionsSchema),
+  companyController.updateStaffRestrictions
+);
+
 router.post(
   '/profile/logo',
   authenticate,
@@ -132,6 +156,13 @@ router.get(
   '/team/invitations',
   authenticate,
   requireCompanyAccess,
+  companyController.getInvitations
+);
+
+router.get(
+  '/team/invitations/pending',
+  authenticate,
+  requireCompanyAccess,
   companyController.getPendingInvitations
 );
 
@@ -140,6 +171,13 @@ router.delete(
   authenticate,
   requireCompanyAccess,
   companyController.cancelInvitation
+);
+
+router.post(
+  '/team/invitations/:invitationId/revoke',
+  authenticate,
+  requireCompanyAccess,
+  companyController.revokeInvitation
 );
 
 // Warehouse Addresses

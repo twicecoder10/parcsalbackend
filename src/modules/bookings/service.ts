@@ -10,6 +10,7 @@ import { createNotification, createCompanyNotification } from '../../utils/notif
 import { emailService } from '../../config/email';
 import Stripe from 'stripe';
 import { config } from '../../config/env';
+import { checkStaffPermission } from '../../utils/permissions';
 import { generateBookingId } from '../../utils/bookingId';
 import { deleteImagesByUrls } from '../../utils/upload';
 import { generateShippingLabel } from '../../utils/labelGenerator';
@@ -328,6 +329,9 @@ export const bookingService = {
   },
 
   async getCompanyBookings(req: AuthRequest, query: any) {
+    // Check staff permission
+    await checkStaffPermission(req, 'viewBookings');
+
     if (!req.user || !req.user.companyId) {
       throw new ForbiddenError('User must be associated with a company');
     }
@@ -345,6 +349,9 @@ export const bookingService = {
   },
 
   async updateBookingStatus(req: AuthRequest, id: string, dto: UpdateBookingStatusDto) {
+    // Check staff permission
+    await checkStaffPermission(req, 'updateBookingStatus');
+
     // Get booking
     const booking = await bookingRepository.findById(id);
     if (!booking) {
@@ -656,6 +663,9 @@ export const bookingService = {
   },
 
   async acceptBooking(req: AuthRequest, id: string) {
+    // Check staff permission
+    await checkStaffPermission(req, 'acceptBooking');
+
     const booking = await bookingRepository.findById(id);
     if (!booking) {
       throw new NotFoundError('Booking not found');
@@ -773,6 +783,9 @@ export const bookingService = {
   },
 
   async rejectBooking(req: AuthRequest, id: string, reason: string) {
+    // Check staff permission
+    await checkStaffPermission(req, 'rejectBooking');
+
     const booking = await bookingRepository.findById(id);
     if (!booking) {
       throw new NotFoundError('Booking not found');
@@ -1004,6 +1017,9 @@ export const bookingService = {
   },
 
   async addProofImages(req: AuthRequest, id: string, dto: AddProofImagesDto) {
+    // Check staff permission
+    await checkStaffPermission(req, 'addProofImages');
+
     // Get booking - verify it exists first
     const booking = await bookingRepository.findById(id);
     if (!booking) {
@@ -1072,6 +1088,9 @@ export const bookingService = {
   },
 
   async regenerateBookingLabel(req: AuthRequest, id: string) {
+    // Check staff permission
+    await checkStaffPermission(req, 'regenerateLabel');
+
     const booking = await bookingRepository.findById(id);
     if (!booking) {
       throw new NotFoundError('Booking not found');
@@ -1114,6 +1133,35 @@ export const bookingService = {
     const updatedBooking = await bookingRepository.updateLabelUrl(booking.id, labelResult.url);
 
     return updatedBooking;
+  },
+
+  async scanBarcode(req: AuthRequest, barcode: string) {
+    if (!req.user || !req.user.companyId) {
+      throw new ForbiddenError('User must be associated with a company');
+    }
+
+    // The barcode contains the booking ID
+    const bookingId = barcode.trim();
+
+    // Validate booking ID format (should match booking ID pattern)
+    if (!bookingId || bookingId.length === 0) {
+      throw new BadRequestError('Invalid barcode: empty or invalid format');
+    }
+
+    // Find booking by ID
+    const booking = await bookingRepository.findById(bookingId);
+    
+    if (!booking) {
+      throw new NotFoundError('Booking not found. Please check the barcode and try again.');
+    }
+
+    // Verify the booking belongs to the company
+    if (booking.companyId !== req.user.companyId) {
+      throw new ForbiddenError('This booking does not belong to your company');
+    }
+
+    // Return booking with full details
+    return booking;
   },
 };
 

@@ -262,7 +262,32 @@ export const companyController = {
     }
   },
 
+  async getInvitations(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const invitations = await companyService.getInvitations(req);
+      res.status(200).json({
+        status: 'success',
+        data: invitations,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async cancelInvitation(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { invitationId } = req.params;
+      const result = await companyService.cancelInvitation(req, invitationId);
+      res.status(200).json({
+        status: 'success',
+        message: result.message,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async revokeInvitation(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const { invitationId } = req.params;
       const result = await companyService.cancelInvitation(req, invitationId);
@@ -356,6 +381,47 @@ export const companyController = {
       res.status(200).json({
         status: 'success',
         data: company,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // Get current user's restrictions (for frontend layout)
+  async getMyRestrictions(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const restrictions = await companyService.getMyRestrictions(req);
+      res.status(200).json({
+        status: 'success',
+        data: restrictions,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // Staff Restrictions Management (per staff member)
+  async getStaffRestrictions(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { memberId } = req.params;
+      const restrictions = await companyService.getStaffRestrictions(req, memberId);
+      res.status(200).json({
+        status: 'success',
+        data: restrictions,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async updateStaffRestrictions(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { memberId } = req.params;
+      const { restrictions } = req.body;
+      const updated = await companyService.updateStaffRestrictions(req, memberId, restrictions || {});
+      res.status(200).json({
+        status: 'success',
+        data: updated,
       });
     } catch (error) {
       next(error);
