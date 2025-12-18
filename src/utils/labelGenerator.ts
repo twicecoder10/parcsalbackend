@@ -7,7 +7,7 @@ import bwipjs from 'bwip-js';
 interface BookingWithRelations extends Booking {
   shipmentSlot: ShipmentSlot;
   customer: User;
-  company: Company;
+  company: Company | null; // Nullable when company is deleted but booking is preserved
   pickupWarehouse?: WarehouseAddress | null;
   deliveryWarehouse?: WarehouseAddress | null;
 }
@@ -315,11 +315,6 @@ async function generateLabelContent(
   
   if (booking.length && booking.width && booking.height) {
     doc.text(`Dimensions: ${booking.length} x ${booking.width} x ${booking.height} cm`, 20, yPosition);
-    yPosition += lineHeight;
-  }
-  
-  if (booking.value) {
-    doc.text(`Value: £${Number(booking.value).toFixed(2)}`, 20, yPosition);
     yPosition += lineHeight;
   }
 

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { companyController } from './controller';
 import { authenticate, requireCompanyAccess } from '../../middleware/auth';
 import { validate } from '../../middleware/validator';
-import { updateCompanySchema, completeCompanyOnboardingSchema, createWarehouseAddressSchema, updateWarehouseAddressSchema, deleteWarehouseAddressSchema, getCompanyWarehousesSchema, getPublicCompanyProfileSchema, staffRestrictionsSchema } from './dto';
+import { updateCompanySchema, completeCompanyOnboardingSchema, createWarehouseAddressSchema, updateWarehouseAddressSchema, deleteWarehouseAddressSchema, getCompanyWarehousesSchema, getPublicCompanyProfileSchema, getCompanyShipmentsSchema, staffRestrictionsSchema } from './dto';
 
 const router = Router();
 
@@ -217,6 +217,12 @@ router.get(
   '/:companyIdOrSlug/warehouses',
   validate(getCompanyWarehousesSchema),
   companyController.getCompanyWarehouseAddresses
+);
+
+router.get(
+  '/:companyIdOrSlug/shipments',
+  validate(getCompanyShipmentsSchema),
+  companyController.getCompanyShipments
 );
 
 router.get(

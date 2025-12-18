@@ -164,12 +164,19 @@ export const bookingService = {
       // Generate custom booking ID within transaction for consistency
       const bookingId = await generateBookingId(tx);
       
+      // Get company name to preserve it in booking (in case company is deleted later)
+      const company = await tx.company.findUnique({
+        where: { id: shipmentSlot.companyId },
+        select: { name: true },
+      });
+
       // Create booking
       const bookingData: CreateBookingData = {
         id: bookingId,
         shipmentSlotId: dto.shipmentSlotId,
         customerId,
         companyId: shipmentSlot.companyId,
+        companyName: company?.name || null, // Preserve company name for customer reference
         requestedWeightKg: dto.requestedWeightKg || null,
         requestedItemsCount: dto.requestedItemsCount || null,
         calculatedPrice: new Decimal(calculatedPrice),
@@ -288,7 +295,7 @@ export const bookingService = {
       },
     });
     
-    if (bookingWithRelations?.customer && bookingWithRelations?.shipmentSlot) {
+    if (bookingWithRelations?.customer && bookingWithRelations?.shipmentSlot && booking.companyId) {
       await createCompanyNotification(
         booking.companyId,
         'BOOKING_CREATED',
@@ -363,7 +370,7 @@ export const bookingService = {
       throw new ForbiddenError('Authentication required');
     }
 
-    const isCompanyOwner = booking.companyId === req.user.companyId;
+    const isCompanyOwner = booking.companyId !== null && booking.companyId === req.user.companyId;
     const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
 
     if (!isCompanyOwner && !isSuperAdmin) {
@@ -435,7 +442,7 @@ export const bookingService = {
       });
 
       // Notify company (for status changes that affect company)
-      if (['IN_TRANSIT', 'DELIVERED'].includes(dto.status)) {
+      if (['IN_TRANSIT', 'DELIVERED'].includes(dto.status) && booking.companyId) {
         await createCompanyNotification(
           booking.companyId,
           statusInfo.type,
@@ -502,9 +509,9 @@ export const bookingService = {
               price: Number(bookingForEmail.calculatedPrice),
               currency: 'gbp',
             },
-            bookingForEmail.company.name,
-            bookingForEmail.company.contactEmail || undefined,
-            bookingForEmail.company.contactPhone || undefined
+            bookingForEmail.company?.name || bookingForEmail.companyName || 'Company',
+            bookingForEmail.company?.contactEmail || undefined,
+            bookingForEmail.company?.contactPhone || undefined
           ).catch((err) => {
             console.error('Failed to send booking confirmation email:', err);
           });
@@ -559,7 +566,7 @@ export const bookingService = {
               price: Number(bookingForEmail.calculatedPrice),
               currency: 'gbp',
             },
-            bookingForEmail.company.name
+            bookingForEmail.company?.name || bookingForEmail.companyName || 'Company'
           ).catch((err) => {
             console.error('Failed to send booking cancelled email:', err);
           });
@@ -614,7 +621,7 @@ export const bookingService = {
               price: Number(bookingForEmail.calculatedPrice),
               currency: 'gbp',
             },
-            bookingForEmail.company.name
+            bookingForEmail.company?.name || bookingForEmail.companyName || 'Company'
           ).catch((err) => {
             console.error('Failed to send booking delivered email:', err);
           });
@@ -651,7 +658,7 @@ export const bookingService = {
       throw new ForbiddenError('Authentication required');
     }
 
-    const isCompanyOwner = booking.companyId === req.user.companyId;
+    const isCompanyOwner = booking.companyId !== null && booking.companyId === req.user.companyId;
     const isCustomer = booking.customerId === req.user.id;
     const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
 
@@ -671,7 +678,7 @@ export const bookingService = {
       throw new NotFoundError('Booking not found');
     }
 
-    if (!req.user || booking.companyId !== req.user.companyId) {
+    if (!req.user || !booking.companyId || booking.companyId !== req.user.companyId) {
       throw new ForbiddenError('You do not have permission to accept this booking');
     }
 
@@ -679,9 +686,15 @@ export const bookingService = {
       throw new BadRequestError('Only pending bookings can be accepted');
     }
 
+    // Validate that payment status is PAID before accepting
+    if (booking.paymentStatus !== 'PAID') {
+      throw new BadRequestError('Cannot accept booking. Payment has not been completed by the customer.');
+    }
+
     const updatedBooking = await bookingRepository.updateStatus(id, 'ACCEPTED');
 
     // Generate and upload shipping label
+    // Note: Status is now ACCEPTED and payment is PAID (validated above), so label generation is safe
     try {
       // Get full booking details with all relations needed for label
       const bookingForLabel = await prisma.booking.findUnique({
@@ -695,7 +708,15 @@ export const bookingService = {
         },
       });
 
-      if (bookingForLabel) {
+      if (bookingForLabel && bookingForLabel.company) {
+        // Double-check status and payment before generating label
+        if (bookingForLabel.status !== 'ACCEPTED' && bookingForLabel.status !== 'IN_TRANSIT' && bookingForLabel.status !== 'DELIVERED') {
+          throw new BadRequestError('Cannot generate label for booking with status: ' + bookingForLabel.status);
+        }
+        if (bookingForLabel.paymentStatus !== 'PAID') {
+          throw new BadRequestError('Cannot generate label. Payment has not been completed.');
+        }
+        
         const labelResult = await generateShippingLabel(bookingForLabel);
         await bookingRepository.updateLabelUrl(booking.id, labelResult.url);
       }
@@ -756,9 +777,9 @@ export const bookingService = {
           price: Number(booking.calculatedPrice),
           currency: 'gbp',
         },
-        bookingForEmail.company.name,
-        bookingForEmail.company.contactEmail || undefined,
-        bookingForEmail.company.contactPhone || undefined
+        bookingForEmail.company?.name || bookingForEmail.companyName || 'Company',
+        bookingForEmail.company?.contactEmail || undefined,
+        bookingForEmail.company?.contactPhone || undefined
       ).catch((err) => {
         console.error('Failed to send booking confirmation email:', err);
       });
@@ -791,7 +812,7 @@ export const bookingService = {
       throw new NotFoundError('Booking not found');
     }
 
-    if (!req.user || booking.companyId !== req.user.companyId) {
+    if (!req.user || !booking.companyId || booking.companyId !== req.user.companyId) {
       throw new ForbiddenError('You do not have permission to reject this booking');
     }
 
@@ -907,7 +928,7 @@ export const bookingService = {
           });
 
           refundProcessed = true;
-          console.log(`Refund processed for booking ${booking.id}: £${refundAmount.toFixed(2)}`);
+          // Refund processed successfully - error handling will log if it fails
         }
       } catch (refundError: any) {
         console.error('Failed to process refund for rejected booking:', refundError);
@@ -1037,7 +1058,7 @@ export const bookingService = {
       throw new ForbiddenError('Authentication required');
     }
 
-    const isCompanyOwner = booking.companyId === req.user.companyId;
+    const isCompanyOwner = booking.companyId !== null && booking.companyId === req.user.companyId;
     const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
 
     if (!isCompanyOwner && !isSuperAdmin) {
@@ -1070,11 +1091,21 @@ export const bookingService = {
       throw new ForbiddenError('Authentication required');
     }
 
-    const isCompanyOwner = booking.companyId === req.user.companyId;
+    const isCompanyOwner = booking.companyId !== null && booking.companyId === req.user.companyId;
     const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
 
     if (!isCompanyOwner && !isSuperAdmin) {
       throw new ForbiddenError('You do not have permission to access this booking label');
+    }
+
+    // Validate booking status - cannot access labels for pending, rejected, or cancelled bookings
+    if (booking.status === 'PENDING' || booking.status === 'REJECTED' || booking.status === 'CANCELLED') {
+      throw new BadRequestError(`Cannot access label for booking with status: ${booking.status}`);
+    }
+
+    // Validate payment status - payment must be completed
+    if (booking.paymentStatus !== 'PAID') {
+      throw new BadRequestError('Cannot access label. Payment has not been completed.');
     }
 
     if (!booking.labelUrl) {
@@ -1101,16 +1132,21 @@ export const bookingService = {
       throw new ForbiddenError('Authentication required');
     }
 
-    const isCompanyOwner = booking.companyId === req.user.companyId;
+    const isCompanyOwner = booking.companyId !== null && booking.companyId === req.user.companyId;
     const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
 
     if (!isCompanyOwner && !isSuperAdmin) {
       throw new ForbiddenError('You do not have permission to regenerate this booking label');
     }
 
-    // Only regenerate for accepted bookings
-    if (booking.status !== 'ACCEPTED') {
-      throw new BadRequestError('Labels can only be generated for accepted bookings');
+    // Validate booking status - cannot generate labels for pending, rejected, or cancelled bookings
+    if (booking.status === 'PENDING' || booking.status === 'REJECTED' || booking.status === 'CANCELLED') {
+      throw new BadRequestError(`Cannot generate label for booking with status: ${booking.status}`);
+    }
+
+    // Validate payment status - payment must be completed
+    if (booking.paymentStatus !== 'PAID') {
+      throw new BadRequestError('Cannot generate label. Payment has not been completed.');
     }
 
     // Get full booking details with all relations needed for label
@@ -1127,6 +1163,10 @@ export const bookingService = {
 
     if (!bookingForLabel) {
       throw new NotFoundError('Booking not found');
+    }
+
+    if (!bookingForLabel.company) {
+      throw new BadRequestError('Cannot generate label for booking with deleted company');
     }
 
     const labelResult = await generateShippingLabel(bookingForLabel);
@@ -1156,7 +1196,7 @@ export const bookingService = {
     }
 
     // Verify the booking belongs to the company
-    if (booking.companyId !== req.user.companyId) {
+    if (!booking.companyId || booking.companyId !== req.user.companyId) {
       throw new ForbiddenError('This booking does not belong to your company');
     }
 

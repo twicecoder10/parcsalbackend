@@ -275,19 +275,21 @@ export const customerService = {
 
     // Notify company about cancellation
     const { createCompanyNotification } = await import('../../utils/notifications');
-    await createCompanyNotification(
-      booking.companyId,
-      'BOOKING_CANCELLED',
-      'Booking Cancelled',
-      `Booking ${bookingId} has been cancelled by the customer`,
-      {
-        bookingId: booking.id,
-        customerId: booking.customerId,
-        shipmentSlotId: booking.shipmentSlotId,
-      }
-    ).catch((err) => {
-      console.error('Failed to create notification:', err);
-    });
+    if (booking.companyId) {
+      await createCompanyNotification(
+        booking.companyId,
+        'BOOKING_CANCELLED',
+        'Booking Cancelled',
+        `Booking ${bookingId} has been cancelled by the customer`,
+        {
+          bookingId: booking.id,
+          customerId: booking.customerId,
+          shipmentSlotId: booking.shipmentSlotId,
+        }
+      ).catch((err) => {
+        console.error('Failed to create company notification:', err);
+      });
+    }
 
     return {
       message: 'Booking cancelled successfully',

@@ -21,18 +21,8 @@ export const subscriptionController = {
   async handleWebhook(req: Request, res: Response, next: NextFunction) {
     try {
       const sig = req.headers['stripe-signature'] as string;
-      console.log(`[Subscription Webhook Controller] Received webhook request`);
-      console.log(`[Subscription Webhook Controller] Signature present: ${!!sig}`);
-      console.log(`[Subscription Webhook Controller] Body type: ${typeof req.body}, is Buffer: ${Buffer.isBuffer(req.body)}`);
       
       const result = await subscriptionService.handleStripeWebhook(req.body, sig);
-
-      console.log(`[Subscription Webhook Controller] Webhook processed successfully:`, {
-        received: result.received,
-        message: result.message,
-        eventType: result.eventType,
-        onboardingUpdated: (result as any).onboardingUpdated,
-      });
 
       res.status(200).json(result);
     } catch (error: any) {

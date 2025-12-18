@@ -1134,7 +1134,7 @@ export const adminService = {
         b.status,
         b.calculatedPrice.toString(),
         b.paymentStatus,
-        b.company.name,
+        b.company?.name || b.companyName || 'Deleted Company',
         b.createdAt.toISOString(),
       ]);
       return { format: 'csv', data: [headers, ...rows] };

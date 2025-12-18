@@ -42,6 +42,11 @@ export const paymentService = {
       throw new ForbiddenError('You do not have permission to pay for this booking');
     }
 
+    // Check if booking is rejected
+    if (booking.status === 'REJECTED') {
+      throw new BadRequestError('Payment cannot be made for a rejected booking, kindly make a new booking');
+    }
+
     // Check if already paid
     if (booking.paymentStatus === 'PAID') {
       throw new BadRequestError('Booking is already paid');
@@ -192,19 +197,21 @@ export const paymentService = {
       });
 
       // Notify company
-      await createCompanyNotification(
-        bookingWithDetails.companyId,
-        'PAYMENT_SUCCESS',
-        'Payment Received',
-        `Payment of £${(Number(paymentIntent.amount) / 100).toFixed(2)} received for booking ${bookingId}`,
-        {
-          bookingId,
-          paymentIntentId,
-          amount: Number(paymentIntent.amount) / 100,
-        }
-      ).catch((err) => {
-        console.error('Failed to create company payment notification:', err);
-      });
+      if (bookingWithDetails.companyId) {
+        await createCompanyNotification(
+          bookingWithDetails.companyId,
+          'PAYMENT_SUCCESS',
+          'Payment Received',
+          `Payment of £${(Number(paymentIntent.amount) / 100).toFixed(2)} received for booking ${bookingId}`,
+          {
+            bookingId,
+            paymentIntentId,
+            amount: Number(paymentIntent.amount) / 100,
+          }
+        ).catch((err) => {
+          console.error('Failed to create company payment notification:', err);
+        });
+      }
 
       // Send payment receipt email if customer has email notifications enabled
       if (bookingWithDetails.customer.notificationEmail) {
@@ -224,7 +231,7 @@ export const paymentService = {
             arrivalTime: bookingWithDetails.shipmentSlot.arrivalTime,
             mode: bookingWithDetails.shipmentSlot.mode,
           },
-          bookingWithDetails.company.name
+          bookingWithDetails.company?.name || bookingWithDetails.companyName || 'Company'
         ).catch((err) => {
           console.error('Failed to send payment receipt email:', err);
         });
@@ -384,7 +391,7 @@ export const paymentService = {
                   arrivalTime: bookingWithDetails.shipmentSlot.arrivalTime,
                   mode: bookingWithDetails.shipmentSlot.mode,
                 },
-                bookingWithDetails.company.name
+                bookingWithDetails.company?.name || bookingWithDetails.companyName || 'Company'
               ).catch((err) => {
                 console.error('Failed to send payment receipt email:', err);
               });
@@ -473,20 +480,14 @@ export const paymentService = {
       throw new BadRequestError(`Webhook signature verification failed: ${err.message}`);
     }
 
-    console.log(`[Payment Webhook] Received event: ${event.type}, ID: ${event.id}`);
-
     // Handle payment success via checkout.session.completed
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object as Stripe.Checkout.Session;
-      
-      console.log(`[Payment Webhook] checkout.session.completed - Session ID: ${session.id}`);
-      console.log(`[Payment Webhook] Has subscription: ${!!session.subscription}, Has payment_intent: ${!!session.payment_intent}`);
       
       // Check if this is a subscription checkout
       const subscriptionId = session.subscription as string;
       if (subscriptionId) {
         // This is a subscription checkout - handle it here since it was sent to payment webhook
-        console.log(`[Payment Webhook] Detected subscription checkout, processing in payment webhook`);
         try {
           const companyId = session.metadata?.companyId || session.client_reference_id;
           const planId = session.metadata?.planId;
@@ -503,11 +504,9 @@ export const paymentService = {
           // Check if subscription already exists
           const existingSubscription = await subscriptionRepository.findByStripeSubscriptionId(subscriptionId);
           if (existingSubscription) {
-            console.log(`[Payment Webhook] Subscription ${subscriptionId} already exists, updating onboarding if needed`);
             // Update onboarding even if subscription exists (in case it wasn't updated before)
             try {
               await onboardingRepository.updateCompanyOnboardingStep(companyId, 'payment_setup', true);
-              console.log(`[Payment Webhook] Updated onboarding step for company ${companyId}`);
             } catch (onboardingErr: any) {
               console.error(`[Payment Webhook] Failed to update onboarding:`, onboardingErr.message);
             }
@@ -549,10 +548,8 @@ export const paymentService = {
           // Mark payment_setup onboarding step as complete
           let onboardingUpdated = false;
           try {
-            console.log(`[Payment Webhook] Updating onboarding step 'payment_setup' for company ${companyId}`);
             await onboardingRepository.updateCompanyOnboardingStep(companyId, 'payment_setup', true);
             onboardingUpdated = true;
-            console.log(`[Payment Webhook] Successfully updated onboarding step for company ${companyId}`);
           } catch (err: any) {
             console.error(`[Payment Webhook] Failed to update onboarding step:`, {
               error: err.message,
@@ -564,7 +561,6 @@ export const paymentService = {
               await new Promise(resolve => setTimeout(resolve, 1000));
               await onboardingRepository.updateCompanyOnboardingStep(companyId, 'payment_setup', true);
               onboardingUpdated = true;
-              console.log(`[Payment Webhook] Successfully updated onboarding step on retry for company ${companyId}`);
             } catch (retryErr: any) {
               console.error(`[Payment Webhook] Retry also failed:`, retryErr.message);
             }
@@ -579,13 +575,10 @@ export const paymentService = {
           if (company?.adminId) {
             try {
               await onboardingRepository.updateUserOnboardingStep(company.adminId, 'profile_completion', true);
-              console.log(`[Payment Webhook] Successfully updated user onboarding for admin ${company.adminId}`);
             } catch (err: any) {
               console.error(`[Payment Webhook] Failed to update user onboarding:`, err.message);
             }
           }
-
-          console.log(`[Payment Webhook] Subscription created successfully: ${created.id}`);
           return { 
             received: true, 
             message: 'Subscription checkout processed successfully',
@@ -611,7 +604,6 @@ export const paymentService = {
       }
 
       const bookingId = session.metadata?.bookingId || session.client_reference_id;
-      console.log(`[Payment Webhook] Booking ID from metadata: ${bookingId}`);
 
       if (!bookingId) {
         console.error(`[Payment Webhook] Booking ID not found in session metadata or client_reference_id`);
@@ -625,10 +617,8 @@ export const paymentService = {
         throw new BadRequestError('Payment intent ID not found');
       }
 
-      console.log(`[Payment Webhook] Processing payment - Booking: ${bookingId}, PaymentIntent: ${paymentIntentId}`);
       try {
         const result = await this.processSuccessfulPayment(bookingId, paymentIntentId);
-        console.log(`[Payment Webhook] Payment processed successfully for booking ${bookingId}`);
         return { received: true, message: 'Payment processed successfully', eventType: event.type, bookingId, result };
       } catch (error: any) {
         // Log detailed error
@@ -647,21 +637,16 @@ export const paymentService = {
     if (event.type === 'payment_intent.succeeded') {
       const paymentIntent = event.data.object as Stripe.PaymentIntent;
       
-      console.log(`[Payment Webhook] payment_intent.succeeded - PaymentIntent ID: ${paymentIntent.id}`);
-      console.log(`[Payment Webhook] PaymentIntent metadata:`, paymentIntent.metadata);
-      
       // Try to find booking by payment intent ID
       const existingPayment = await paymentRepository.findByStripePaymentIntentId(paymentIntent.id);
       
       if (existingPayment) {
-        console.log(`[Payment Webhook] Found existing payment record for booking ${existingPayment.bookingId}`);
         // Payment record exists, ensure both payment and booking status are correct
         let needsUpdate = false;
         
         if (existingPayment.status !== 'SUCCEEDED') {
           await paymentRepository.updateStatus(existingPayment.id, 'SUCCEEDED');
           needsUpdate = true;
-          console.log(`[Payment Webhook] Updated payment status to SUCCEEDED`);
         }
         
         // Always check and update booking paymentStatus to ensure consistency
@@ -673,7 +658,6 @@ export const paymentService = {
         if (booking && booking.paymentStatus !== 'PAID') {
           await paymentRepository.updateBookingPaymentStatus(existingPayment.bookingId, 'PAID');
           needsUpdate = true;
-          console.log(`[Payment Webhook] Updated booking payment status to PAID`);
         }
         
         // If we updated something, trigger notifications and email
@@ -744,7 +728,7 @@ export const paymentService = {
                   arrivalTime: bookingWithDetails.shipmentSlot.arrivalTime,
                   mode: bookingWithDetails.shipmentSlot.mode,
                 },
-                bookingWithDetails.company.name
+                bookingWithDetails.company?.name || bookingWithDetails.companyName || 'Company'
               ).catch((err) => {
                 console.error('Failed to send payment receipt email:', err);
               });
@@ -758,12 +742,10 @@ export const paymentService = {
       // If no payment record exists, try to find booking from metadata
       // Note: This is a fallback - ideally checkout.session.completed should have created the record
       const bookingId = paymentIntent.metadata?.bookingId;
-      console.log(`[Payment Webhook] No existing payment record, trying bookingId from metadata: ${bookingId}`);
       
       if (bookingId) {
         try {
           await this.processSuccessfulPayment(bookingId, paymentIntent.id);
-          console.log(`[Payment Webhook] Payment processed from payment_intent.succeeded for booking ${bookingId}`);
           return { received: true, message: 'Payment processed from payment_intent.succeeded', eventType: event.type, bookingId };
         } catch (error: any) {
           console.error(`[Payment Webhook] Error processing payment_intent.succeeded:`, error);
@@ -772,7 +754,6 @@ export const paymentService = {
         }
       }
 
-      console.log(`[Payment Webhook] Payment intent succeeded but no booking ID in metadata`);
       return { received: true, message: 'Payment intent succeeded but no booking ID in metadata', eventType: event.type };
     }
 
@@ -780,8 +761,6 @@ export const paymentService = {
     if (event.type === 'charge.succeeded') {
       const charge = event.data.object as Stripe.Charge;
       const paymentIntentId = charge.payment_intent as string;
-      
-      console.log(`[Payment Webhook] charge.succeeded - Charge ID: ${charge.id}, PaymentIntent: ${paymentIntentId}`);
       
       if (!paymentIntentId) {
         return { received: true, message: 'Charge succeeded but no payment intent ID', eventType: event.type };
@@ -794,7 +773,6 @@ export const paymentService = {
         if (existingPayment.status !== 'SUCCEEDED') {
           await paymentRepository.updateStatus(existingPayment.id, 'SUCCEEDED');
           await paymentRepository.updateBookingPaymentStatus(existingPayment.bookingId, 'PAID');
-          console.log(`[Payment Webhook] Updated payment status from charge.succeeded`);
         } else {
           // Payment status is already SUCCEEDED, but check if booking paymentStatus needs updating
           const booking = await prisma.booking.findUnique({
@@ -803,7 +781,6 @@ export const paymentService = {
           });
           if (booking && booking.paymentStatus !== 'PAID') {
             await paymentRepository.updateBookingPaymentStatus(existingPayment.bookingId, 'PAID');
-            console.log(`[Payment Webhook] Updated booking payment status to PAID from charge.succeeded`);
           }
         }
         return { received: true, message: 'Charge succeeded - payment status updated', eventType: event.type, bookingId: existingPayment.bookingId };
@@ -816,7 +793,6 @@ export const paymentService = {
         
         if (bookingId) {
           await this.processSuccessfulPayment(bookingId, paymentIntentId);
-          console.log(`[Payment Webhook] Payment processed from charge.succeeded for booking ${bookingId}`);
           return { received: true, message: 'Payment processed from charge.succeeded', eventType: event.type, bookingId };
         }
       } catch (error: any) {
@@ -925,7 +901,6 @@ export const paymentService = {
 
     // Handle payment_intent.created (just acknowledge, don't process)
     if (event.type === 'payment_intent.created') {
-      console.log(`[Payment Webhook] payment_intent.created - PaymentIntent ID: ${(event.data.object as Stripe.PaymentIntent).id}`);
       return { received: true, message: 'Payment intent created - no action needed', eventType: event.type };
     }
 
@@ -938,13 +913,11 @@ export const paymentService = {
     ];
     
     if (subscriptionEventTypes.includes(event.type)) {
-      console.log(`[Payment Webhook] Detected subscription event ${event.type}, handling in payment webhook`);
       try {
         // Process the subscription event directly
         // Since the event is already verified with payment secret, we'll process it
         if (event.type === 'customer.subscription.updated') {
           const subscription = event.data.object as Stripe.Subscription;
-          console.log(`[Payment Webhook] Processing customer.subscription.updated for subscription ${subscription.id}`);
           
           // Import subscription repository to handle the update
           const { subscriptionRepository } = await import('../subscriptions/repository');
@@ -974,7 +947,6 @@ export const paymentService = {
                   'payment_setup',
                   true
                 );
-                console.log(`[Payment Webhook] Updated onboarding step for company ${dbSubscription.companyId}`);
               } catch (onboardingErr: any) {
                 console.error(`[Payment Webhook] Failed to update onboarding:`, onboardingErr.message);
                 // Retry once
@@ -985,14 +957,12 @@ export const paymentService = {
                     'payment_setup',
                     true
                   );
-                  console.log(`[Payment Webhook] Successfully updated onboarding on retry for company ${dbSubscription.companyId}`);
                 } catch (retryErr: any) {
                   console.error(`[Payment Webhook] Retry also failed:`, retryErr.message);
                 }
               }
             }
 
-            console.log(`[Payment Webhook] Subscription updated successfully: ${dbSubscription.id}`);
             return { 
               received: true, 
               message: 'Subscription updated successfully',
@@ -1034,7 +1004,8 @@ export const paymentService = {
 
     // Return success for unhandled events (Stripe will retry if we return error)
     // Only handle the events we care about, ignore others
-    console.log(`[Payment Webhook] Unhandled event type: ${event.type}`);
+    // Unhandled event type - log as warning for monitoring
+    console.warn(`[Payment Webhook] Unhandled event type: ${event.type}`);
     return { received: true, message: `Event ${event.type} received but not handled`, eventType: event.type };
   },
 
@@ -1109,7 +1080,7 @@ export const paymentService = {
     }
 
     // Verify the payment belongs to the company
-    if (payment.booking.companyId !== req.user.companyId) {
+    if (!payment.booking.companyId || payment.booking.companyId !== req.user.companyId) {
       throw new ForbiddenError('You do not have permission to view this payment');
     }
 
@@ -1160,7 +1131,7 @@ export const paymentService = {
 
     const where: any = {
       booking: {
-        companyId,
+        companyId: companyId, // This will filter out bookings with null companyId (deleted companies)
       },
     };
 
@@ -1220,7 +1191,7 @@ export const paymentService = {
     }
 
     // Verify the payment belongs to the company
-    if (payment.booking.companyId !== req.user.companyId) {
+    if (!payment.booking.companyId || payment.booking.companyId !== req.user.companyId) {
       throw new ForbiddenError('You do not have permission to refund this payment');
     }
 

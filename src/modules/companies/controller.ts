@@ -387,6 +387,21 @@ export const companyController = {
     }
   },
 
+  // Public endpoint to get company shipments with limited info
+  async getCompanyShipments(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { companyIdOrSlug } = req.params;
+      const result = await companyService.getCompanyShipments(companyIdOrSlug, req.query);
+
+      res.status(200).json({
+        status: 'success',
+        ...result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   // Get current user's restrictions (for frontend layout)
   async getMyRestrictions(req: AuthRequest, res: Response, next: NextFunction) {
     try {

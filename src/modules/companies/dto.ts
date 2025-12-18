@@ -87,6 +87,16 @@ export const getPublicCompanyProfileSchema = z.object({
   }),
 });
 
+export const getCompanyShipmentsSchema = z.object({
+  params: z.object({
+    companyIdOrSlug: z.string().min(1, 'Company ID or slug is required'),
+  }),
+  query: z.object({
+    limit: z.string().optional(),
+    offset: z.string().optional(),
+  }).optional(),
+});
+
 // Staff Restrictions
 export const staffRestrictionsSchema = z.object({
   params: z.object({

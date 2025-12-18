@@ -23,7 +23,7 @@ export const emailService = {
         html,
       });
 
-      console.log('Email sent:', info.messageId);
+      // Email sent successfully - messageId available in return value if needed
       return { success: true, messageId: info.messageId };
     } catch (error) {
       console.error('Error sending email:', error);
@@ -1231,6 +1231,100 @@ export const emailService = {
     return this.sendEmail(
       email,
       `Shipment Delivered - ${bookingDetails.originCity} to ${bookingDetails.destinationCity} - Parcsal`,
+      html
+    );
+  },
+
+  async sendAccountDeletionEmail(
+    email: string,
+    name: string,
+    isCompanyAdmin: boolean,
+    companyName?: string
+  ) {
+    const html = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>Account Deleted - Parcsal</title>
+      </head>
+      <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5; line-height: 1.6;">
+        <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f5f5; padding: 20px 0;">
+          <tr>
+            <td align="center" style="padding: 20px 0;">
+              <table role="presentation" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); overflow: hidden;">
+                <!-- Header -->
+                <tr>
+                  <td style="background: linear-gradient(135deg, #FF6B35 0%, #FF8C42 100%); padding: 40px 30px; text-align: center;">
+                    <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Account Deleted</h1>
+                    <p style="margin: 12px 0 0 0; color: #ffffff; font-size: 16px; opacity: 0.9;">Your account has been successfully deleted</p>
+                  </td>
+                </tr>
+                <!-- Content -->
+                <tr>
+                  <td style="padding: 40px 30px;">
+                    <p style="margin: 0 0 16px 0; color: #1A1A1A; font-size: 16px;">Hello ${name},</p>
+                    <p style="margin: 0 0 24px 0; color: #4A4A4A; font-size: 16px;">This email confirms that your Parcsal account has been permanently deleted as requested.</p>
+                    
+                    <div style="background-color: #FFF5F0; border-left: 4px solid #FF6B35; padding: 20px; margin: 24px 0; border-radius: 4px;">
+                      <h3 style="margin: 0 0 12px 0; color: #1A1A1A; font-size: 16px; font-weight: 600;">What Was Deleted:</h3>
+                      <ul style="margin: 8px 0 0 0; padding-left: 20px; color: #4A4A4A; font-size: 14px; line-height: 1.8;">
+                        <li>Your account and all personal information have been anonymized</li>
+                        ${isCompanyAdmin && companyName ? `
+                        <li><strong>Your company "${companyName}" has been permanently deleted</strong></li>
+                        <li>All staff members associated with your company have had their accounts anonymized</li>
+                        <li>All company data (shipments, bookings, warehouses, subscriptions) has been deleted</li>
+                        ` : `
+                        <li>Your booking records have been anonymized (personal contact information removed)</li>
+                        <li>Your reviews remain but are linked to an anonymized account</li>
+                        `}
+                        <li>All notifications have been deleted</li>
+                      </ul>
+                    </div>
+
+                    <div style="background-color: #E3F2FD; border-left: 4px solid #2196F3; padding: 20px; margin: 24px 0; border-radius: 4px;">
+                      <h3 style="margin: 0 0 12px 0; color: #1A1A1A; font-size: 16px; font-weight: 600;">Data Privacy:</h3>
+                      <p style="margin: 0; color: #4A4A4A; font-size: 14px; line-height: 1.8;">
+                        In accordance with data privacy regulations, all personally identifiable information has been removed from our systems. 
+                        Business records (such as anonymized booking data) may be retained for business analytics purposes but cannot be linked back to you.
+                      </p>
+                    </div>
+                    
+                    <div style="background-color: #FFF9E6; border-left: 3px solid #FFB84D; padding: 16px; margin: 24px 0; border-radius: 4px;">
+                      <p style="margin: 0 0 8px 0; color: #856404; font-size: 14px; font-weight: 600;">⚠️ Important</p>
+                      <p style="margin: 0; color: #856404; font-size: 14px;">
+                        This action cannot be undone. If you wish to use Parcsal again in the future, you'll need to create a new account.
+                      </p>
+                    </div>
+
+                    <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #EEEEEE;">
+                      <p style="margin: 0 0 8px 0; color: #666666; font-size: 14px;">We're sorry to see you go. If you have any feedback about your experience with Parcsal, we'd love to hear from you.</p>
+                      <p style="margin: 0; color: #999999; font-size: 14px;">
+                        If you didn't request this deletion, please contact our support team immediately.
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+                <!-- Footer -->
+                <tr>
+                  <td style="background-color: #F8F8F8; padding: 24px 30px; text-align: center; border-top: 1px solid #EEEEEE;">
+                    <p style="margin: 0 0 8px 0; color: #999999; font-size: 12px;">© ${new Date().getFullYear()} Parcsal. All rights reserved.</p>
+                    <p style="margin: 0; color: #999999; font-size: 12px;">This is an automated confirmation email for account deletion.</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
+    `;
+
+    return this.sendEmail(
+      email,
+      'Account Deleted - Parcsal',
       html
     );
   },

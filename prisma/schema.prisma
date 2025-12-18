@@ -264,9 +264,10 @@ model Booking {
   shipmentSlotId    String
   shipmentSlot      ShipmentSlot  @relation(fields: [shipmentSlotId], references: [id], onDelete: Cascade)
   customerId        String
-  customer          User          @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  companyId         String        // Denormalized for easier querying
-  company           Company       @relation("CompanyBookings", fields: [companyId], references: [id], onDelete: Cascade)
+  customer          User          @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  companyId         String?       // Denormalized for easier querying - nullable to preserve bookings when company is deleted
+  companyName       String?       // Denormalized company name - preserved when company is deleted for customer reference
+  company           Company?      @relation("CompanyBookings", fields: [companyId], references: [id], onDelete: SetNull)
   requestedWeightKg Float?
   requestedItemsCount Int?
   calculatedPrice   Decimal       @db.Decimal(10, 2)

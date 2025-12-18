@@ -1571,5 +1571,67 @@ export const companyService = {
       reviewCount,
     };
   },
+
+  async getCompanyShipments(companyIdOrSlug: string, query: any = {}) {
+    // Find company by ID or slug
+    const company = await prisma.company.findFirst({
+      where: {
+        OR: [
+          { id: companyIdOrSlug },
+          { slug: companyIdOrSlug },
+        ],
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
+    // Parse pagination
+    const pagination = parsePagination(query);
+
+    // Query only PUBLISHED shipments for this company
+    const where = {
+      companyId: company.id,
+      status: 'PUBLISHED' as const,
+    };
+
+    const [shipments, total] = await Promise.all([
+      prisma.shipmentSlot.findMany({
+        where,
+        skip: pagination.offset,
+        take: pagination.limit,
+        orderBy: {
+          departureTime: 'asc',
+        },
+        select: {
+          id: true,
+          originCountry: true,
+          originCity: true,
+          destinationCountry: true,
+          destinationCity: true,
+          departureTime: true,
+          arrivalTime: true,
+          mode: true,
+          pricingModel: true,
+          pricePerKg: true,
+          pricePerItem: true,
+          flatPrice: true,
+          totalCapacityKg: true,
+          totalCapacityItems: true,
+          remainingCapacityKg: true,
+          remainingCapacityItems: true,
+          cutoffTimeForReceivingItems: true,
+          createdAt: true,
+        },
+      }),
+      prisma.shipmentSlot.count({ where }),
+    ]);
+
+    return createPaginatedResponse(shipments, total, pagination);
+  },
 };
 

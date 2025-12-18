@@ -183,5 +183,33 @@ export const authController = {
       return next(error);
     }
   },
+
+  async deleteAccount(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        return res.status(401).json({
+          status: 'error',
+          message: 'Unauthorized',
+        });
+      }
+
+      const { password } = req.body as { password: string };
+      if (!password) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Password is required',
+        });
+      }
+
+      const result = await authService.deleteAccount(req.user.id, password);
+
+      return res.status(200).json({
+        status: 'success',
+        message: result.message,
+      });
+    } catch (error) {
+      return next(error);
+    }
+  },
 };
 

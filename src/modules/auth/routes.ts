@@ -70,6 +70,9 @@ router.post(
 // Get current user profile
 router.get('/me', authenticate, authController.getMe);
 
+// Delete account
+router.delete('/account', authenticate, authController.deleteAccount);
+
 // Accept team invitation
 router.post(
   '/accept-invitation',

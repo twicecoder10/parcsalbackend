@@ -176,14 +176,12 @@ export const subscriptionService = {
       // Mark payment_setup onboarding step as complete
       let onboardingUpdated = false;
       try {
-        console.log(`[Subscription Webhook] Updating onboarding step 'payment_setup' for company ${companyId}`);
         await onboardingRepository.updateCompanyOnboardingStep(
           companyId,
           'payment_setup',
           true
         );
         onboardingUpdated = true;
-        console.log(`[Subscription Webhook] Successfully updated onboarding step 'payment_setup' for company ${companyId}`);
       } catch (err: any) {
         // Don't fail the subscription creation if onboarding update fails, but log it clearly
         console.error(`[Subscription Webhook] CRITICAL: Failed to update onboarding step 'payment_setup' for company ${companyId}:`, {
@@ -194,7 +192,6 @@ export const subscriptionService = {
         });
         // Try one more time after a short delay
         try {
-          console.log(`[Subscription Webhook] Retrying onboarding update for company ${companyId}`);
           await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
           await onboardingRepository.updateCompanyOnboardingStep(
             companyId,
@@ -202,7 +199,6 @@ export const subscriptionService = {
             true
           );
           onboardingUpdated = true;
-          console.log(`[Subscription Webhook] Successfully updated onboarding step on retry for company ${companyId}`);
         } catch (retryErr: any) {
           console.error(`[Subscription Webhook] CRITICAL: Retry also failed for onboarding update:`, {
             error: retryErr.message,
@@ -226,7 +222,6 @@ export const subscriptionService = {
             'profile_completion',
             true
           );
-          console.log(`[Subscription Webhook] Successfully updated user onboarding for admin ${company.adminId}`);
         } catch (err: any) {
           console.error(`[Subscription Webhook] Failed to update user onboarding:`, {
             error: err.message,
@@ -247,14 +242,11 @@ export const subscriptionService = {
 
     // Handle subscription updated
     if (event.type === 'customer.subscription.updated') {
-      console.log(`[Subscription Webhook] Processing customer.subscription.updated event: ${event.id}`);
       const subscription = event.data.object as Stripe.Subscription;
-      console.log(`[Subscription Webhook] Subscription ID: ${subscription.id}, Status: ${subscription.status}`);
       
       const dbSubscription = await subscriptionRepository.findByStripeSubscriptionId(subscription.id);
 
       if (dbSubscription) {
-        console.log(`[Subscription Webhook] Found subscription in database: ${dbSubscription.id}`);
         await subscriptionRepository.updateStatus(
           dbSubscription.id,
           subscription.status === 'active' ? 'ACTIVE' : subscription.status === 'past_due' ? 'PAST_DUE' : 'CANCELLED',
@@ -270,7 +262,6 @@ export const subscriptionService = {
           );
         }
 
-        console.log(`[Subscription Webhook] Subscription updated successfully: ${dbSubscription.id}`);
         return { 
           received: true, 
           message: 'Subscription updated successfully',
@@ -318,7 +309,8 @@ export const subscriptionService = {
 
     // Return success for unhandled events (Stripe will retry if we return error)
     // Only handle the events we care about, ignore others
-    console.log(`[Subscription Webhook] Unhandled event type: ${event.type}, Event ID: ${event.id}`);
+    // Unhandled event type - log as warning for monitoring
+    console.warn(`[Subscription Webhook] Unhandled event type: ${event.type}, Event ID: ${event.id}`);
     return { received: true, message: `Event ${event.type} received but not handled`, eventType: event.type };
   },
 

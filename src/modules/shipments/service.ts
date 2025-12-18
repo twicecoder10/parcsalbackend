@@ -46,6 +46,28 @@ export const shipmentService = {
       }
     }
 
+    // Determine final status - check warehouses if trying to publish
+    let finalStatus = dto.status || 'DRAFT';
+    
+    // If trying to publish, validate warehouses exist
+    if (finalStatus === 'PUBLISHED') {
+      const warehouses = await prisma.warehouseAddress.findMany({
+        where: { companyId: req.user.companyId },
+        select: { country: true },
+      });
+
+      const warehouseCountries = new Set(warehouses.map(w => w.country));
+
+      if (!warehouseCountries.has(dto.originCountry)) {
+        // Automatically set to DRAFT if warehouse is missing
+        finalStatus = 'DRAFT';
+      } else if (!warehouseCountries.has(dto.destinationCountry)) {
+        // Automatically set to DRAFT if warehouse is missing
+        finalStatus = 'DRAFT';
+      }
+    }
+    // If status is DRAFT, allow creation without warehouse validation
+
     // Validate pricing model matches provided prices
     if (dto.pricingModel === 'FLAT' && !dto.flatPrice) {
       throw new BadRequestError('Flat price is required for FLAT pricing model');
@@ -101,7 +123,7 @@ export const shipmentService = {
       pricePerItem: dto.pricePerItem,
       flatPrice: dto.flatPrice,
       cutoffTimeForReceivingItems: new Date(dto.cutoffTimeForReceivingItems),
-      status: dto.status || 'DRAFT',
+      status: finalStatus,
     };
 
     // Check if this is the company's first shipment slot (before creating)
@@ -158,6 +180,31 @@ export const shipmentService = {
 
     if (!req.user || shipment.companyId !== req.user.companyId) {
       throw new ForbiddenError('You do not have permission to update this shipment');
+    }
+
+    // Validate warehouses if updating countries on a PUBLISHED shipment
+    const originCountry = dto.originCountry !== undefined ? dto.originCountry : shipment.originCountry;
+    const destinationCountry = dto.destinationCountry !== undefined ? dto.destinationCountry : shipment.destinationCountry;
+
+    if (shipment.status === 'PUBLISHED' && (dto.originCountry !== undefined || dto.destinationCountry !== undefined)) {
+      const warehouses = await prisma.warehouseAddress.findMany({
+        where: { companyId: shipment.companyId },
+        select: { country: true },
+      });
+
+      const warehouseCountries = new Set(warehouses.map(w => w.country));
+
+      if (!warehouseCountries.has(originCountry)) {
+        throw new BadRequestError(
+          `Cannot update published shipment slot. You must have at least one warehouse in ${originCountry} (origin country).`
+        );
+      }
+
+      if (!warehouseCountries.has(destinationCountry)) {
+        throw new BadRequestError(
+          `Cannot update published shipment slot. You must have at least one warehouse in ${destinationCountry} (destination country).`
+        );
+      }
     }
 
     // Determine the pricing model after update (use new value if provided, otherwise existing)
@@ -217,6 +264,28 @@ export const shipmentService = {
 
     if (!req.user || shipment.companyId !== req.user.companyId) {
       throw new ForbiddenError('You do not have permission to update this shipment');
+    }
+
+    // Validate warehouses when trying to publish
+    if (dto.status === 'PUBLISHED' && shipment.status !== 'PUBLISHED') {
+      const warehouses = await prisma.warehouseAddress.findMany({
+        where: { companyId: shipment.companyId },
+        select: { country: true },
+      });
+
+      const warehouseCountries = new Set(warehouses.map(w => w.country));
+
+      if (!warehouseCountries.has(shipment.originCountry)) {
+        throw new BadRequestError(
+          `Cannot publish shipment slot. You must have at least one warehouse in ${shipment.originCountry} (origin country).`
+        );
+      }
+
+      if (!warehouseCountries.has(shipment.destinationCountry)) {
+        throw new BadRequestError(
+          `Cannot publish shipment slot. You must have at least one warehouse in ${shipment.destinationCountry} (destination country).`
+        );
+      }
     }
 
     // Check if there are any pending bookings when trying to change status
@@ -345,11 +414,8 @@ export const shipmentService = {
     // Update bookings if we have a status to apply
     if (bookingStatusUpdate) {
       try {
-        const updateResult = await bookingRepository.updateStatusBySlot(id, bookingStatusUpdate, filterStatuses);
-        console.log(`Updated ${updateResult.count} bookings for slot ${id} to status ${bookingStatusUpdate} (filtered by: ${filterStatuses?.join(', ') || 'all'})`);
-        if (updateResult.count === 0) {
-          console.warn(`No bookings were updated for slot ${id}. This might indicate bookings are in a different status than expected.`);
-        }
+        await bookingRepository.updateStatusBySlot(id, bookingStatusUpdate, filterStatuses);
+        // Bookings updated successfully - error handling will log if it fails
       } catch (error) {
         console.error(`Failed to update bookings for slot ${id}:`, error);
         // Don't throw - allow the tracking status update to succeed even if booking update fails
@@ -451,7 +517,7 @@ export const shipmentService = {
                     price: Number(booking.calculatedPrice),
                     currency: 'gbp',
                   },
-                  booking.company.name
+                  booking.company?.name || booking.companyName || 'Company'
                 );
               } catch (err) {
                 console.error(`Failed to send delayed email for booking ${booking.id}:`, err);
@@ -518,7 +584,7 @@ export const shipmentService = {
                     price: Number(booking.calculatedPrice),
                     currency: 'gbp',
                   },
-                  booking.company.name
+                  booking.company?.name || booking.companyName || 'Company'
                 );
               } catch (err) {
                 console.error(`Failed to send delivered email for booking ${booking.id}:`, err);

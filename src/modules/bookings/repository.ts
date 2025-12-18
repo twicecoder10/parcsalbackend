@@ -7,7 +7,8 @@ export interface CreateBookingData {
   id: string;
   shipmentSlotId: string;
   customerId: string;
-  companyId: string;
+  companyId: string | null; // Nullable to preserve bookings when company is deleted
+  companyName?: string | null; // Store company name for reference when company is deleted
   requestedWeightKg?: number | null;
   requestedItemsCount?: number | null;
   calculatedPrice: Decimal;
