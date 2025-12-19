@@ -82,7 +82,11 @@ export const reviewService = {
 
   async getReview(bookingId: string) {
     const review = await reviewRepository.findByBookingId(bookingId);
-    return review;
+    if (!review) {
+      return null;
+    }
+    // Sanitize customer email for public endpoint
+    return this.sanitizeReviewForPublic(review);
   },
 
   async getCompanyReviews(companyIdOrSlug: string, query: any) {
@@ -115,7 +119,10 @@ export const reviewService = {
       rating,
     });
 
-    return createPaginatedResponse(reviews, total, pagination);
+    // Sanitize customer emails for public endpoint
+    const sanitizedReviews = reviews.map(review => this.sanitizeReviewForPublic(review));
+
+    return createPaginatedResponse(sanitizedReviews, total, pagination);
   },
 
   async getMyReviews(req: AuthRequest, query: any) {
@@ -236,6 +243,18 @@ export const reviewService = {
 
     // Update review with company reply
     return reviewRepository.update(bookingId, { companyReply: reply });
+  },
+
+  sanitizeReviewForPublic(review: any) {
+    const sanitized = { ...review };
+    
+    // Remove customer email from public reviews
+    if (sanitized.customer) {
+      const { email, ...customerData } = sanitized.customer;
+      sanitized.customer = customerData;
+    }
+
+    return sanitized;
   },
 };
 

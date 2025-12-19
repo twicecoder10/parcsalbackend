@@ -331,6 +331,14 @@ export const customerService = {
       throw new NotFoundError('Shipment slot not found');
     }
 
+    // Sanitize company data - remove sensitive contact information
+    const sanitizedCompany = shipmentSlot.company ? {
+      id: shipmentSlot.company.id,
+      name: shipmentSlot.company.name,
+      slug: shipmentSlot.company.slug,
+      logoUrl: shipmentSlot.company.logoUrl,
+    } : null;
+
     return {
       booking: {
         id: booking.id,
@@ -367,7 +375,7 @@ export const customerService = {
         status: shipmentSlot.status,
         cutoffTimeForReceivingItems: shipmentSlot.cutoffTimeForReceivingItems,
       },
-      company: shipmentSlot.company,
+      company: sanitizedCompany,
     };
   },
 };

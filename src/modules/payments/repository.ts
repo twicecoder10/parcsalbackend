@@ -8,12 +8,27 @@ export interface CreatePaymentData {
   amount: number;
   currency: string;
   status: PaymentTransactionStatus;
+  baseAmount?: number | null;
+  adminFeeAmount?: number | null;
+  processingFeeAmount?: number | null;
+  totalAmount?: number | null;
 }
 
 export const paymentRepository = {
   async create(data: CreatePaymentData): Promise<Payment> {
     return prisma.payment.create({
-      data,
+      data: {
+        id: data.id,
+        bookingId: data.bookingId,
+        stripePaymentIntentId: data.stripePaymentIntentId,
+        amount: data.amount,
+        currency: data.currency,
+        status: data.status,
+        baseAmount: data.baseAmount,
+        adminFeeAmount: data.adminFeeAmount,
+        processingFeeAmount: data.processingFeeAmount,
+        totalAmount: data.totalAmount,
+      },
       include: {
         booking: {
           include: {

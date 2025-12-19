@@ -14,6 +14,7 @@ import { checkStaffPermission } from '../../utils/permissions';
 import { generateBookingId } from '../../utils/bookingId';
 import { deleteImagesByUrls } from '../../utils/upload';
 import { generateShippingLabel } from '../../utils/labelGenerator';
+import { calculateBookingCharges } from '../../utils/paymentCalculator';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -332,7 +333,10 @@ export const bookingService = {
       { ...pagination, status }
     );
 
-    return createPaginatedResponse(bookings, total, pagination);
+    // Sanitize sensitive data for customer
+    const sanitizedBookings = bookings.map(booking => this.sanitizeBookingForCustomer(booking));
+
+    return createPaginatedResponse(sanitizedBookings, total, pagination);
   },
 
   async getCompanyBookings(req: AuthRequest, query: any) {
@@ -352,7 +356,10 @@ export const bookingService = {
       { ...pagination, status, search }
     );
 
-    return createPaginatedResponse(bookings, total, pagination);
+    // Sanitize sensitive data for company users
+    const sanitizedBookings = bookings.map(booking => this.sanitizeBookingForCompany(booking));
+
+    return createPaginatedResponse(sanitizedBookings, total, pagination);
   },
 
   async updateBookingStatus(req: AuthRequest, id: string, dto: UpdateBookingStatusDto) {
@@ -644,7 +651,10 @@ export const bookingService = {
       }
     }
 
-    return updatedBooking;
+    // Sanitize sensitive data for company users (but not super admins)
+    return !isSuperAdmin 
+      ? this.sanitizeBookingForCompany(updatedBooking)
+      : updatedBooking;
   },
 
   async getBookingById(req: AuthRequest, id: string) {
@@ -666,7 +676,116 @@ export const bookingService = {
       throw new ForbiddenError('You do not have permission to view this booking');
     }
 
+    // Calculate price breakdown if not already stored (for pending bookings)
+    // This ensures frontend always has fee breakdown before payment
+    const bookingWithFees = booking as any;
+    if (booking.paymentStatus === 'PENDING' && (!bookingWithFees.baseAmount || !bookingWithFees.totalAmount)) {
+      const baseAmountMinor = Math.round(Number(booking.calculatedPrice) * 100);
+      const charges = calculateBookingCharges(baseAmountMinor);
+      
+      // Add calculated fees to booking object for response
+      bookingWithFees.baseAmount = charges.baseAmount;
+      bookingWithFees.adminFeeAmount = charges.adminFeeAmount;
+      bookingWithFees.processingFeeAmount = charges.processingFeeAmount;
+      bookingWithFees.totalAmount = charges.totalAmount;
+    }
+
+    // Filter sensitive data for customers
+    if (isCustomer && !isCompanyOwner && !isSuperAdmin) {
+      return this.sanitizeBookingForCustomer(booking);
+    }
+
+    // Filter sensitive data for company users (but not super admins)
+    if (isCompanyOwner && !isSuperAdmin) {
+      return this.sanitizeBookingForCompany(booking);
+    }
+
     return booking;
+  },
+
+  sanitizeBookingForCustomer(booking: any) {
+    const sanitized = { ...booking };
+
+    // Sanitize payment object - remove Stripe IDs
+    if (sanitized.payment) {
+      const { stripePaymentIntentId, stripeChargeId, ...paymentData } = sanitized.payment;
+      sanitized.payment = paymentData;
+    }
+
+    // Sanitize company object - remove sensitive Stripe and internal data
+    if (sanitized.company) {
+      const {
+        stripeAccountId,
+        stripeOnboardingStatus,
+        chargesEnabled,
+        payoutsEnabled,
+        adminId,
+        activePlanId,
+        planExpiresAt,
+        onboardingSteps,
+        contactPhone,
+        contactEmail,
+        ...companyData
+      } = sanitized.company;
+      sanitized.company = companyData;
+    }
+
+    // Sanitize company in shipmentSlot
+    if (sanitized.shipmentSlot?.company) {
+      const {
+        stripeAccountId,
+        stripeOnboardingStatus,
+        chargesEnabled,
+        payoutsEnabled,
+        adminId,
+        activePlanId,
+        planExpiresAt,
+        onboardingSteps,
+        contactPhone,
+        contactEmail,
+        ...companyData
+      } = sanitized.shipmentSlot.company;
+      sanitized.shipmentSlot.company = companyData;
+    }
+
+    return sanitized;
+  },
+
+  sanitizeBookingForCompany(booking: any) {
+    const sanitized = { ...booking };
+
+    // Remove customer email (PII) - company doesn't need customer email
+    if (sanitized.customer) {
+      const { email, ...customerData } = sanitized.customer;
+      sanitized.customer = customerData;
+    }
+
+    // Sanitize payment object - remove Stripe IDs (sensitive payment data)
+    if (sanitized.payment) {
+      const { stripePaymentIntentId, stripeChargeId, ...paymentData } = sanitized.payment;
+      sanitized.payment = paymentData;
+    }
+
+    // Company can see their own company data, so no need to sanitize company object
+    // But sanitize company in shipmentSlot if it's a different company (shouldn't happen, but safety)
+    if (sanitized.shipmentSlot?.company && sanitized.shipmentSlot.company.id !== booking.companyId) {
+      const {
+        stripeAccountId,
+        stripeOnboardingStatus,
+        chargesEnabled,
+        payoutsEnabled,
+        adminId,
+        activePlanId,
+        planExpiresAt,
+        onboardingSteps,
+        contactPhone,
+        contactEmail,
+        ...companyData
+      } = sanitized.shipmentSlot.company;
+      sanitized.shipmentSlot.company = companyData;
+    }
+
+    return sanitized;
   },
 
   async acceptBooking(req: AuthRequest, id: string) {
@@ -800,7 +919,8 @@ export const bookingService = {
       console.error('Failed to create customer notification:', err);
     });
 
-    return updatedBooking;
+    // Sanitize sensitive data for company users
+    return this.sanitizeBookingForCompany(updatedBooking);
   },
 
   async rejectBooking(req: AuthRequest, id: string, reason: string) {
@@ -1001,7 +1121,8 @@ export const bookingService = {
       });
     }
 
-    return updatedBooking;
+    // Sanitize sensitive data for company users
+    return this.sanitizeBookingForCompany(updatedBooking);
   },
 
   async getBookingStats(req: AuthRequest) {
@@ -1077,7 +1198,10 @@ export const bookingService = {
       dto.deliveryProofImages || []
     );
 
-    return updatedBooking;
+    // Sanitize sensitive data for company users (but not super admins)
+    return !isSuperAdmin 
+      ? this.sanitizeBookingForCompany(updatedBooking)
+      : updatedBooking;
   },
 
   async getBookingLabel(req: AuthRequest, id: string) {
@@ -1172,7 +1296,10 @@ export const bookingService = {
     const labelResult = await generateShippingLabel(bookingForLabel);
     const updatedBooking = await bookingRepository.updateLabelUrl(booking.id, labelResult.url);
 
-    return updatedBooking;
+    // Sanitize sensitive data for company users (but not super admins)
+    return !isSuperAdmin
+      ? this.sanitizeBookingForCompany(updatedBooking)
+      : updatedBooking;
   },
 
   async scanBarcode(req: AuthRequest, barcode: string) {

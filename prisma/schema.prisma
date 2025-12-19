@@ -61,6 +61,13 @@ enum PaymentTransactionStatus {
   PARTIALLY_REFUNDED
 }
 
+enum PayoutRequestStatus {
+  REQUESTED
+  PROCESSING
+  PAID
+  FAILED
+}
+
 enum SubscriptionStatus {
   ACTIVE
   CANCELLED
@@ -170,6 +177,11 @@ model Company {
   admin               User?        @relation("CompanyAdmin", fields: [adminId], references: [id], onDelete: SetNull)
   onboardingSteps     Json?        @default("{}") // Track onboarding progress: { stepName: { completed: boolean, completedAt?: DateTime } }
   onboardingCompleted Boolean      @default(false)
+  // Stripe Connect fields
+  stripeAccountId      String?      @unique
+  stripeOnboardingStatus String     @default("NOT_STARTED") // NOT_STARTED | IN_PROGRESS | COMPLETE
+  chargesEnabled        Boolean     @default(false)
+  payoutsEnabled        Boolean     @default(false)
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
 
@@ -182,6 +194,7 @@ model Company {
   warehouseAddresses WarehouseAddress[]
   reviews          Review[]
   chatRooms        ChatRoom[]
+  payoutRequests   PayoutRequest[]
 
   @@index([slug])
   @@index([isVerified])
@@ -274,6 +287,11 @@ model Booking {
   requestedWeightKg Float?
   requestedItemsCount Int?
   calculatedPrice   Decimal       @db.Decimal(10, 2)
+  // Payment fee breakdown (in minor units - pence)
+  baseAmount        Int?          // Shipment price in pence
+  adminFeeAmount    Int?          // Parcsal admin fee in pence
+  processingFeeAmount Int?        // Stripe processing fee in pence
+  totalAmount       Int?          // Total amount in pence
   status            BookingStatus @default(PENDING)
   paymentStatus     PaymentStatus @default(PENDING)
   notes             String?
@@ -336,6 +354,11 @@ model Payment {
   stripePaymentIntentId String               @unique
   stripeChargeId       String?
   amount               Decimal               @db.Decimal(10, 2)
+  // Payment fee breakdown (in minor units - pence)
+  baseAmount           Int?                  // Shipment price in pence
+  adminFeeAmount       Int?                  // Parcsal admin fee in pence
+  processingFeeAmount Int?                  // Stripe processing fee in pence
+  totalAmount          Int?                  // Total amount in pence
   currency             String                @default("gbp")
   status               PaymentTransactionStatus @default(PENDING)
   paymentMethod        String?               // e.g., "card", "bank_transfer"
@@ -482,5 +505,22 @@ model Message {
   @@index([chatRoomId, createdAt])
   @@index([senderId])
   @@index([isRead])
+}
+
+model PayoutRequest {
+  id              String            @id @default(uuid())
+  companyId       String
+  company         Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  amount          Int                // Amount in minor units (pence)
+  currency        String             @default("gbp")
+  status          PayoutRequestStatus @default(REQUESTED)
+  stripePayoutId  String?            @unique
+  failureReason   String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([companyId])
+  @@index([status])
+  @@index([createdAt])
 }
 

@@ -20,6 +20,7 @@ import notificationRoutes from './modules/notifications/routes';
 import uploadRoutes from './modules/uploads/routes';
 import reviewRoutes from './modules/reviews/routes';
 import chatRoutes from './modules/chat/routes';
+import connectRoutes from './modules/connect/routes';
 import { paymentController } from './modules/payments/controller';
 
 const app: Express = express();
@@ -84,6 +85,7 @@ app.use('/companies/notifications', notificationRoutes);
 app.use('/uploads', uploadRoutes);
 app.use('/', reviewRoutes); // Reviews routes (includes /bookings/:bookingId/reviews, /companies/:companyId/reviews, etc.)
 app.use('/chat', chatRoutes); // Chat routes
+app.use('/connect', connectRoutes); // Stripe Connect routes
 
 // Error handling middleware (must be last)
 app.use(errorHandler);

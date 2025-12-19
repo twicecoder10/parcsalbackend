@@ -9,6 +9,7 @@ import { parsePagination, createPaginatedResponse } from '../../utils/pagination
 import { createNotification, createCompanyNotification } from '../../utils/notifications';
 import { emailService } from '../../config/email';
 import { generatePaymentId } from '../../utils/paymentId';
+import { calculateBookingCharges } from '../../utils/paymentCalculator';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -20,7 +21,7 @@ export const paymentService = {
       throw new ForbiddenError('Only customers can create checkout sessions');
     }
 
-    // Get booking
+    // Get booking with company Stripe Connect info
     const booking = await prisma.booking.findUnique({
       where: { id: dto.bookingId },
       include: {
@@ -58,10 +59,23 @@ export const paymentService = {
       throw new BadRequestError('Payment already completed');
     }
 
-    const amountInCents = Math.round(Number(booking.calculatedPrice) * 100);
+    // Calculate fees using payment calculator
+    const baseAmountMinor = Math.round(Number(booking.calculatedPrice) * 100);
+    const charges = calculateBookingCharges(baseAmountMinor);
 
-    // Create Stripe checkout session
-    const session = await stripe.checkout.sessions.create({
+    // Update booking with fee breakdown
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: {
+        baseAmount: charges.baseAmount,
+        adminFeeAmount: charges.adminFeeAmount,
+        processingFeeAmount: charges.processingFeeAmount,
+        totalAmount: charges.totalAmount,
+      },
+    });
+
+    // Prepare checkout session parameters
+    const sessionParams: Stripe.Checkout.SessionCreateParams = {
       payment_method_types: ['card'],
       line_items: [
         {
@@ -71,7 +85,7 @@ export const paymentService = {
               name: `Shipment Booking - ${booking.shipmentSlot.originCity} to ${booking.shipmentSlot.destinationCity}`,
               description: `Booking ID: ${booking.id}`,
             },
-            unit_amount: amountInCents,
+            unit_amount: charges.totalAmount,
           },
           quantity: 1,
         },
@@ -91,7 +105,78 @@ export const paymentService = {
           customerId: booking.customerId,
         },
       },
-    });
+    };
+
+    // If company has Stripe Connect account, use Connect with application fee
+    // Company should receive: baseAmount (their listed price)
+    // Parcsal collects: adminFee
+    // Stripe processing fee is deducted automatically by Stripe
+    const company = booking.shipmentSlot.company;
+    if (company && (company as any).stripeAccountId && (company as any).chargesEnabled) {
+      // Application fee = adminFee only
+      // Company receives: totalAmount - adminFee - StripeProcessingFee ≈ baseAmount
+      // Note: Stripe's actual processing fee may differ slightly from our estimate
+      sessionParams.payment_intent_data = {
+        ...sessionParams.payment_intent_data,
+        application_fee_amount: charges.adminFeeAmount,
+        transfer_data: {
+          destination: (company as any).stripeAccountId,
+        },
+        metadata: {
+          bookingId: booking.id,
+          customerId: booking.customerId,
+          companyId: company.id,
+        },
+      };
+      
+      console.log(`[Payment] Using Stripe Connect for booking ${booking.id}:`, {
+        companyId: company.id,
+        stripeAccountId: (company as any).stripeAccountId,
+        totalAmount: charges.totalAmount,
+        applicationFee: charges.adminFeeAmount,
+        expectedCompanyReceives: charges.baseAmount,
+      });
+    } else {
+      console.warn(`[Payment] Company ${booking.companyId} does not have Stripe Connect enabled. Payment will go to platform account.`, {
+        hasStripeAccountId: !!(company && (company as any).stripeAccountId),
+        chargesEnabled: !!(company && (company as any).chargesEnabled),
+      });
+    }
+
+    // Create Stripe checkout session
+    const session = await stripe.checkout.sessions.create(sessionParams);
+
+    // Log session details for debugging
+    if (sessionParams.payment_intent_data?.transfer_data?.destination) {
+      console.log(`[Payment] Checkout session created with Connect:`, {
+        sessionId: session.id,
+        paymentIntentId: session.payment_intent,
+        applicationFeeAmount: sessionParams.payment_intent_data.application_fee_amount,
+        transferDestination: sessionParams.payment_intent_data.transfer_data.destination,
+        totalAmount: charges.totalAmount,
+      });
+
+      // Verify PaymentIntent was created with application fee (if payment intent exists)
+      if (session.payment_intent && typeof session.payment_intent === 'string') {
+        try {
+          const paymentIntent = await stripe.paymentIntents.retrieve(session.payment_intent);
+          console.log(`[Payment] PaymentIntent verification:`, {
+            paymentIntentId: paymentIntent.id,
+            amount: paymentIntent.amount,
+            application_fee_amount: paymentIntent.application_fee_amount,
+            transfer_data: paymentIntent.transfer_data,
+            hasApplicationFee: !!paymentIntent.application_fee_amount,
+            hasTransferData: !!paymentIntent.transfer_data,
+          });
+
+          if (paymentIntent.transfer_data?.destination && !paymentIntent.application_fee_amount) {
+            console.error(`[Payment] CRITICAL: PaymentIntent ${paymentIntent.id} has transfer_data but NO application_fee_amount! All funds will go to connected account.`);
+          }
+        } catch (error: any) {
+          console.warn(`[Payment] Could not retrieve PaymentIntent for verification:`, error.message);
+        }
+      }
+    }
 
     return {
       sessionId: session.id,
@@ -105,6 +190,16 @@ export const paymentService = {
   async processSuccessfulPayment(bookingId: string, paymentIntentId: string) {
     // Get payment intent from Stripe
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+    // Log PaymentIntent details for debugging Connect payments
+    console.log(`[Payment] Processing payment for booking ${bookingId}:`, {
+      paymentIntentId: paymentIntent.id,
+      amount: paymentIntent.amount,
+      application_fee_amount: paymentIntent.application_fee_amount,
+      transfer_data: paymentIntent.transfer_data,
+      on_behalf_of: paymentIntent.on_behalf_of,
+      transfer_data_destination: paymentIntent.transfer_data?.destination,
+    });
 
     // Get booking
     const booking = await prisma.booking.findUnique({
@@ -125,17 +220,36 @@ export const paymentService = {
       throw new BadRequestError(`Payment intent status is ${paymentIntent.status}, not succeeded`);
     }
 
+    // Verify application fee is set correctly for Connect payments
+    if (paymentIntent.transfer_data?.destination && !paymentIntent.application_fee_amount) {
+      console.error(`[Payment] WARNING: PaymentIntent ${paymentIntentId} has transfer_data but NO application_fee_amount! All funds will go to connected account.`);
+    }
+
+    // Get fee breakdown from booking (should already be calculated)
+    const bookingWithFees = await prisma.booking.findUnique({
+      where: { id: bookingId },
+    });
+
     // Create or update payment record
     const existingPayment = await paymentRepository.findByBookingId(bookingId);
     if (existingPayment) {
-      // Update existing payment record
-      await paymentRepository.updateStatus(existingPayment.id, 'SUCCEEDED');
+      // Update existing payment record with fee breakdown if not already set
+      await prisma.payment.update({
+        where: { id: existingPayment.id },
+        data: {
+          status: 'SUCCEEDED',
+          baseAmount: bookingWithFees?.baseAmount ?? existingPayment.baseAmount,
+          adminFeeAmount: bookingWithFees?.adminFeeAmount ?? existingPayment.adminFeeAmount,
+          processingFeeAmount: bookingWithFees?.processingFeeAmount ?? existingPayment.processingFeeAmount,
+          totalAmount: bookingWithFees?.totalAmount ?? existingPayment.totalAmount,
+        },
+      });
       await paymentRepository.updateBookingPaymentStatus(bookingId, 'PAID');
     } else {
       // Generate custom payment ID
       const paymentId = await generatePaymentId();
       
-      // Create new payment record
+      // Create new payment record with fee breakdown
       const paymentData: CreatePaymentData = {
         id: paymentId,
         bookingId,
@@ -143,6 +257,10 @@ export const paymentService = {
         amount: Number(paymentIntent.amount) / 100,
         currency: paymentIntent.currency,
         status: 'SUCCEEDED',
+        baseAmount: bookingWithFees?.baseAmount ?? null,
+        adminFeeAmount: bookingWithFees?.adminFeeAmount ?? null,
+        processingFeeAmount: bookingWithFees?.processingFeeAmount ?? null,
+        totalAmount: bookingWithFees?.totalAmount ?? null,
       };
       await paymentRepository.create(paymentData);
       await paymentRepository.updateBookingPaymentStatus(bookingId, 'PAID');
@@ -617,6 +735,33 @@ export const paymentService = {
         throw new BadRequestError('Payment intent ID not found');
       }
 
+      // Verify PaymentIntent has application fee before processing
+      try {
+        const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+        console.log(`[Payment Webhook] PaymentIntent verification for booking ${bookingId}:`, {
+          paymentIntentId: paymentIntent.id,
+          customerPaid: paymentIntent.amount,
+          application_fee_amount: paymentIntent.application_fee_amount,
+          transfer_data: paymentIntent.transfer_data,
+          hasApplicationFee: !!paymentIntent.application_fee_amount,
+          hasTransferData: !!paymentIntent.transfer_data,
+        });
+
+        if (paymentIntent.transfer_data?.destination && !paymentIntent.application_fee_amount) {
+          console.error(`[Payment Webhook] CRITICAL: PaymentIntent ${paymentIntentId} has transfer_data but NO application_fee_amount! All funds will go to connected account.`);
+        } else if (paymentIntent.transfer_data?.destination && paymentIntent.application_fee_amount) {
+          const expectedCompanyReceives = paymentIntent.amount - paymentIntent.application_fee_amount;
+          console.log(`[Payment Webhook] Application fee correctly applied:`, {
+            customerPaid: `£${(paymentIntent.amount / 100).toFixed(2)}`,
+            applicationFee: `£${(paymentIntent.application_fee_amount / 100).toFixed(2)}`,
+            expectedCompanyReceives: `£${(expectedCompanyReceives / 100).toFixed(2)}`,
+            note: 'Company will receive expectedCompanyReceives minus Stripe processing fees',
+          });
+        }
+      } catch (error: any) {
+        console.warn(`[Payment Webhook] Could not retrieve PaymentIntent for verification:`, error.message);
+      }
+
       try {
         const result = await this.processSuccessfulPayment(bookingId, paymentIntentId);
         return { received: true, message: 'Payment processed successfully', eventType: event.type, bookingId, result };
@@ -1000,6 +1145,87 @@ export const paymentService = {
           error: err.message
         };
       }
+    }
+
+    // Handle Stripe Connect account.updated event
+    if (event.type === 'account.updated') {
+      const account = event.data.object as Stripe.Account;
+      
+      // Find company by stripeAccountId
+      const company = await prisma.company.findFirst({
+        where: { stripeAccountId: account.id },
+      });
+
+      if (company) {
+        // Determine onboarding status
+        let onboardingStatus: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETE' = 'NOT_STARTED';
+        if (account.details_submitted && account.charges_enabled && account.payouts_enabled) {
+          onboardingStatus = 'COMPLETE';
+        } else if (account.details_submitted || account.charges_enabled || account.payouts_enabled) {
+          onboardingStatus = 'IN_PROGRESS';
+        }
+
+        // Update company status
+        await prisma.company.update({
+          where: { id: company.id },
+          data: {
+            stripeOnboardingStatus: onboardingStatus,
+            chargesEnabled: account.charges_enabled || false,
+            payoutsEnabled: account.payouts_enabled || false,
+          },
+        });
+
+        return { received: true, message: 'Account status updated', eventType: event.type, companyId: company.id };
+      }
+
+      return { received: true, message: 'Account updated but company not found', eventType: event.type };
+    }
+
+    // Handle payout.paid event
+    if (event.type === 'payout.paid') {
+      const payout = event.data.object as Stripe.Payout;
+      
+      // Find payout request by stripePayoutId
+      const payoutRequest = await prisma.payoutRequest.findUnique({
+        where: { stripePayoutId: payout.id },
+      });
+
+      if (payoutRequest) {
+        await prisma.payoutRequest.update({
+          where: { id: payoutRequest.id },
+          data: {
+            status: 'PAID',
+          },
+        });
+
+        return { received: true, message: 'Payout marked as paid', eventType: event.type, payoutRequestId: payoutRequest.id };
+      }
+
+      return { received: true, message: 'Payout paid but payout request not found', eventType: event.type };
+    }
+
+    // Handle payout.failed event
+    if (event.type === 'payout.failed') {
+      const payout = event.data.object as Stripe.Payout;
+      
+      // Find payout request by stripePayoutId
+      const payoutRequest = await prisma.payoutRequest.findUnique({
+        where: { stripePayoutId: payout.id },
+      });
+
+      if (payoutRequest) {
+        await prisma.payoutRequest.update({
+          where: { id: payoutRequest.id },
+          data: {
+            status: 'FAILED',
+            failureReason: payout.failure_message || 'Payout failed',
+          },
+        });
+
+        return { received: true, message: 'Payout marked as failed', eventType: event.type, payoutRequestId: payoutRequest.id };
+      }
+
+      return { received: true, message: 'Payout failed but payout request not found', eventType: event.type };
     }
 
     // Return success for unhandled events (Stripe will retry if we return error)
