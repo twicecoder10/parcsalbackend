@@ -1332,6 +1332,8 @@ export const companyService = {
         viewPayments: true,
         viewPaymentStats: true,
         processRefund: true,
+        replyToMessage: true,
+        viewMessages: true,
       };
 
       const restrictions = (user.restrictions as Record<string, boolean> | null) || {};
@@ -1412,6 +1414,8 @@ export const companyService = {
       viewPayments: true,
       viewPaymentStats: true,
       processRefund: true,
+      replyToMessage: true,
+      viewMessages: true,
     };
 
     const restrictions = (member.restrictions as Record<string, boolean> | null) || {};
@@ -1494,6 +1498,8 @@ export const companyService = {
       'viewPayments',
       'viewPaymentStats',
       'processRefund',
+      'replyToMessage',
+      'viewMessages',
     ];
 
     const invalidActions = Object.keys(restrictions).filter((key) => !validActions.includes(key));
@@ -1632,6 +1638,133 @@ export const companyService = {
     ]);
 
     return createPaginatedResponse(shipments, total, pagination);
+  },
+
+  async browseCompanies(query: any = {}) {
+    // Parse pagination
+    const pagination = parsePagination(query);
+
+    // Build where clause - only show verified companies
+    const where: any = {
+      isVerified: true,
+    };
+
+    // Add filters
+    if (query.country) {
+      where.country = {
+        equals: query.country,
+        mode: 'insensitive',
+      };
+    }
+
+    if (query.city) {
+      where.city = {
+        equals: query.city,
+        mode: 'insensitive',
+      };
+    }
+
+    if (query.search) {
+      where.OR = [
+        {
+          name: {
+            contains: query.search,
+            mode: 'insensitive',
+          },
+        },
+        {
+          description: {
+            contains: query.search,
+            mode: 'insensitive',
+          },
+        },
+        {
+          city: {
+            contains: query.search,
+            mode: 'insensitive',
+          },
+        },
+        {
+          country: {
+            contains: query.search,
+            mode: 'insensitive',
+          },
+        },
+      ];
+    }
+
+    // Query companies
+    const [companies, total] = await Promise.all([
+      prisma.company.findMany({
+        where,
+        skip: pagination.offset,
+        take: pagination.limit,
+        orderBy: {
+          createdAt: 'desc',
+        },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          description: true,
+          logoUrl: true,
+          website: true,
+          country: true,
+          city: true,
+          isVerified: true,
+        },
+      }),
+      prisma.company.count({ where }),
+    ]);
+
+    // Get ratings and review counts for all companies
+    const companyIds = companies.map((c) => c.id);
+    const [ratings, reviewCounts] = await Promise.all([
+      prisma.review.groupBy({
+        by: ['companyId'],
+        where: {
+          companyId: { in: companyIds },
+        },
+        _avg: {
+          rating: true,
+        },
+      }),
+      prisma.review.groupBy({
+        by: ['companyId'],
+        where: {
+          companyId: { in: companyIds },
+        },
+        _count: true,
+      }),
+    ]);
+
+    // Create maps for quick lookup
+    const ratingMap = new Map(
+      ratings.map((r) => [
+        r.companyId,
+        r._avg.rating !== null ? Number(Number(r._avg.rating).toFixed(1)) : null,
+      ])
+    );
+    const reviewCountMap = new Map(
+      reviewCounts.map((r) => [r.companyId, r._count])
+    );
+
+    // Combine company data with ratings
+    const companiesWithRatings = companies.map((company) => ({
+      id: company.id,
+      name: company.name,
+      slug: company.slug,
+      description: company.description,
+      logoUrl: company.logoUrl,
+      website: company.website,
+      country: company.country,
+      city: company.city,
+      isVerified: company.isVerified,
+      rating: ratingMap.get(company.id) ?? null,
+      reviewCount: reviewCountMap.get(company.id) ?? 0,
+    }));
+
+    return createPaginatedResponse(companiesWithRatings, total, pagination);
   },
 };
 

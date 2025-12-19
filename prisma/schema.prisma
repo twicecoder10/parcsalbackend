@@ -137,6 +137,8 @@ model User {
   sentInvitations TeamInvitation[] @relation("InvitedBy")
   acceptedInvitations TeamInvitation[] @relation("AcceptedBy")
   reviews        Review[]
+  customerChatRooms ChatRoom[] @relation("CustomerChatRooms")
+  sentMessages    Message[]
 
   @@index([email])
   @@index([companyId])
@@ -179,6 +181,7 @@ model Company {
   invitations      TeamInvitation[]
   warehouseAddresses WarehouseAddress[]
   reviews          Review[]
+  chatRooms        ChatRoom[]
 
   @@index([slug])
   @@index([isVerified])
@@ -318,6 +321,7 @@ model Booking {
   // Relations
   payment Payment?
   review  Review?
+  chatRoom ChatRoom?
 
   @@index([customerId])
   @@index([companyId])
@@ -439,5 +443,44 @@ model Review {
   @@index([customerId])
   @@index([bookingId])
   @@index([rating])
+}
+
+model ChatRoom {
+  id            String   @id @default(uuid())
+  customerId    String
+  customer      User     @relation("CustomerChatRooms", fields: [customerId], references: [id], onDelete: Cascade)
+  companyId     String
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bookingId     String?  @unique // Optional: link to a specific booking (unique to ensure one chat room per booking)
+  booking       Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  lastMessageAt DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  messages Message[]
+
+  @@unique([customerId, companyId, bookingId])
+  @@index([customerId])
+  @@index([companyId])
+  @@index([bookingId])
+  @@index([lastMessageAt])
+}
+
+model Message {
+  id          String    @id @default(uuid())
+  chatRoomId  String
+  chatRoom    ChatRoom  @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
+  senderId    String
+  sender      User      @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  content     String
+  isRead      Boolean   @default(false)
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([chatRoomId, createdAt])
+  @@index([senderId])
+  @@index([isRead])
 }
 

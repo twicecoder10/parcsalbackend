@@ -1,6 +1,9 @@
+import { createServer } from 'http';
+import { Server as SocketIOServer } from 'socket.io';
 import app from './app';
 import { config } from './config/env';
 import prisma from './config/database';
+import { setupChatSocket } from './modules/chat/socket';
 
 const PORT = config.port;
 
@@ -10,8 +13,24 @@ async function startServer() {
     await prisma.$connect();
     console.log('✅ Database connected');
 
+    // Create HTTP server
+    const httpServer = createServer(app);
+
+    // Initialize Socket.IO
+    const io = new SocketIOServer(httpServer, {
+      cors: {
+        origin: config.frontendUrl,
+        credentials: true,
+        methods: ['GET', 'POST'],
+      },
+    });
+
+    // Setup chat socket handlers
+    setupChatSocket(io);
+    console.log('✅ Socket.IO initialized');
+
     // Start server
-    app.listen(PORT, () => {
+    httpServer.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
       console.log(`📝 Environment: ${config.nodeEnv}`);
     });

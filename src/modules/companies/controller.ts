@@ -402,6 +402,20 @@ export const companyController = {
     }
   },
 
+  // Public endpoint to browse companies
+  async browseCompanies(req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = await companyService.browseCompanies(req.query);
+
+      res.status(200).json({
+        status: 'success',
+        ...result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   // Get current user's restrictions (for frontend layout)
   async getMyRestrictions(req: AuthRequest, res: Response, next: NextFunction) {
     try {

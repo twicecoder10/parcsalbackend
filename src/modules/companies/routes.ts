@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { companyController } from './controller';
 import { authenticate, requireCompanyAccess } from '../../middleware/auth';
 import { validate } from '../../middleware/validator';
-import { updateCompanySchema, completeCompanyOnboardingSchema, createWarehouseAddressSchema, updateWarehouseAddressSchema, deleteWarehouseAddressSchema, getCompanyWarehousesSchema, getPublicCompanyProfileSchema, getCompanyShipmentsSchema, staffRestrictionsSchema } from './dto';
+import { updateCompanySchema, completeCompanyOnboardingSchema, createWarehouseAddressSchema, updateWarehouseAddressSchema, deleteWarehouseAddressSchema, getCompanyWarehousesSchema, getPublicCompanyProfileSchema, getCompanyShipmentsSchema, browseCompaniesSchema, staffRestrictionsSchema } from './dto';
 
 const router = Router();
 
@@ -213,6 +213,13 @@ router.delete(
 );
 
 // Public routes (must be after all specific routes to avoid conflicts)
+// Browse route must be before :companyIdOrSlug routes to avoid conflicts
+router.get(
+  '/browse',
+  validate(browseCompaniesSchema),
+  companyController.browseCompanies
+);
+
 router.get(
   '/:companyIdOrSlug/warehouses',
   validate(getCompanyWarehousesSchema),

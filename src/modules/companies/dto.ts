@@ -97,6 +97,16 @@ export const getCompanyShipmentsSchema = z.object({
   }).optional(),
 });
 
+export const browseCompaniesSchema = z.object({
+  query: z.object({
+    limit: z.string().optional(),
+    offset: z.string().optional(),
+    country: z.string().optional(),
+    city: z.string().optional(),
+    search: z.string().optional(),
+  }).optional(),
+});
+
 // Staff Restrictions
 export const staffRestrictionsSchema = z.object({
   params: z.object({
