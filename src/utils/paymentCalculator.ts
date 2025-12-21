@@ -4,7 +4,7 @@
  * Calculates booking charges including:
  * - Base amount (shipment price)
  * - Admin fee (10% of base, capped at £10)
- * - Processing fee (grossed-up so Stripe fees are covered by the customer; UK card estimate 1.4% + £0.20)
+ * - Processing fee (grossed-up so Stripe fees are covered by the customer; configured percent + fixed fee)
  * - Total amount
  * 
  * All amounts are in MINOR units (pence for GBP)
@@ -34,9 +34,17 @@ export function calculateBookingCharges(baseAmountMinor: number): BookingCharges
   const ADMIN_FEE_PERCENT = 0.10;
   const ADMIN_FEE_CAP_MINOR = 1000; // £10
 
-  // Stripe UK card fee estimate. Note: actual fees can vary by payment method/card.
-  const STRIPE_PERCENT = 0.014;
-  const STRIPE_FIXED_MINOR = 20; // £0.20
+  // Stripe processing fee estimate used for gross-up. Actual Stripe fees can vary by payment method/card.
+  // Configure via env to match your Stripe account pricing.
+  const STRIPE_PERCENT = Number(process.env.STRIPE_FEE_PERCENT ?? '0.0325');
+  const STRIPE_FIXED_MINOR = Number(process.env.STRIPE_FEE_FIXED_MINOR ?? '20');
+
+  if (!Number.isFinite(STRIPE_PERCENT) || STRIPE_PERCENT < 0 || STRIPE_PERCENT >= 1) {
+    throw new Error('STRIPE_FEE_PERCENT must be a number in [0, 1)');
+  }
+  if (!Number.isFinite(STRIPE_FIXED_MINOR) || STRIPE_FIXED_MINOR < 0) {
+    throw new Error('STRIPE_FEE_FIXED_MINOR must be a non-negative number');
+  }
 
   // -----------------------------
   // Admin fee

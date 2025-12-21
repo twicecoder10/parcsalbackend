@@ -107,34 +107,43 @@ export const paymentService = {
       },
     };
 
-    // If company has Stripe Connect account, use Connect with application fee
-    // Company should receive: baseAmount (their listed price)
-    // Parcsal collects: adminFee
-    // Stripe processing fee is deducted automatically by Stripe
+    // Stripe Connect (Destination charge)
+    // - amount: charges.totalAmount (grossed-up total customer pays)
+    // - transfer_data.destination: company Stripe account ID
+    // - transfer_data.amount: charges.baseAmount (company receives exactly the base shipment price)
+    // Platform keeps the remainder (totalAmount - baseAmount) which includes admin fee + processing fee.
+    // Note: We do NOT set application_fee_amount as it conflicts with transfer_data.amount.
     const company = booking.shipmentSlot.company;
     if (company && (company as any).stripeAccountId && (company as any).chargesEnabled) {
-      // Application fee = adminFee only
-      // Company receives: totalAmount - adminFee - StripeProcessingFee ≈ baseAmount
-      // Note: Stripe's actual processing fee may differ slightly from our estimate
       sessionParams.payment_intent_data = {
         ...sessionParams.payment_intent_data,
-        application_fee_amount: charges.adminFeeAmount,
+        // Destination charge to the connected account
         transfer_data: {
           destination: (company as any).stripeAccountId,
+          // Send EXACTLY the base shipment amount to the company
+          amount: charges.baseAmount,
         },
         metadata: {
           bookingId: booking.id,
           customerId: booking.customerId,
           companyId: company.id,
+          // Include breakdown for debugging
+          baseAmount: charges.baseAmount.toString(),
+          adminFeeAmount: charges.adminFeeAmount.toString(),
+          processingFeeAmount: charges.processingFeeAmount.toString(),
+          totalAmount: charges.totalAmount.toString(),
         },
       };
-      
+
       console.log(`[Payment] Using Stripe Connect for booking ${booking.id}:`, {
         companyId: company.id,
         stripeAccountId: (company as any).stripeAccountId,
-        totalAmount: charges.totalAmount,
-        applicationFee: charges.adminFeeAmount,
-        expectedCompanyReceives: charges.baseAmount,
+        customerPays: charges.totalAmount,
+        companyReceives: charges.baseAmount,
+        platformRetains: charges.totalAmount - charges.baseAmount,
+        platformAdminFee: charges.adminFeeAmount,
+        processingFeeChargedToCustomer: charges.processingFeeAmount,
+        note: 'Company receives transfer_data.amount; platform keeps remainder (admin fee + processing fee). Stripe processing fee is deducted at the charge level.',
       });
     } else {
       console.warn(`[Payment] Company ${booking.companyId} does not have Stripe Connect enabled. Payment will go to platform account.`, {
@@ -151,26 +160,27 @@ export const paymentService = {
       console.log(`[Payment] Checkout session created with Connect:`, {
         sessionId: session.id,
         paymentIntentId: session.payment_intent,
-        applicationFeeAmount: sessionParams.payment_intent_data.application_fee_amount,
         transferDestination: sessionParams.payment_intent_data.transfer_data.destination,
+        transferAmount: sessionParams.payment_intent_data.transfer_data.amount,
         totalAmount: charges.totalAmount,
       });
 
-      // Verify PaymentIntent was created with application fee (if payment intent exists)
+      // Verify PaymentIntent was created with transfer_data (if payment intent exists)
       if (session.payment_intent && typeof session.payment_intent === 'string') {
         try {
           const paymentIntent = await stripe.paymentIntents.retrieve(session.payment_intent);
+          const companyReceives = paymentIntent.transfer_data?.amount ?? null;
           console.log(`[Payment] PaymentIntent verification:`, {
             paymentIntentId: paymentIntent.id,
             amount: paymentIntent.amount,
-            application_fee_amount: paymentIntent.application_fee_amount,
             transfer_data: paymentIntent.transfer_data,
-            hasApplicationFee: !!paymentIntent.application_fee_amount,
+            companyReceives: companyReceives,
+            platformRetains: companyReceives !== null ? paymentIntent.amount - companyReceives : null,
             hasTransferData: !!paymentIntent.transfer_data,
           });
 
-          if (paymentIntent.transfer_data?.destination && !paymentIntent.application_fee_amount) {
-            console.error(`[Payment] CRITICAL: PaymentIntent ${paymentIntent.id} has transfer_data but NO application_fee_amount! All funds will go to connected account.`);
+          if (paymentIntent.transfer_data?.destination && !paymentIntent.transfer_data?.amount) {
+            console.warn(`[Payment] WARNING: PaymentIntent ${paymentIntent.id} has transfer_data.destination but NO transfer_data.amount!`);
           }
         } catch (error: any) {
           console.warn(`[Payment] Could not retrieve PaymentIntent for verification:`, error.message);
@@ -192,11 +202,13 @@ export const paymentService = {
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
 
     // Log PaymentIntent details for debugging Connect payments
+    const companyReceives = paymentIntent.transfer_data?.amount ?? null;
     console.log(`[Payment] Processing payment for booking ${bookingId}:`, {
       paymentIntentId: paymentIntent.id,
       amount: paymentIntent.amount,
-      application_fee_amount: paymentIntent.application_fee_amount,
       transfer_data: paymentIntent.transfer_data,
+      companyReceives: companyReceives,
+      platformRetains: companyReceives !== null ? paymentIntent.amount - companyReceives : null,
       on_behalf_of: paymentIntent.on_behalf_of,
       transfer_data_destination: paymentIntent.transfer_data?.destination,
     });
@@ -220,9 +232,9 @@ export const paymentService = {
       throw new BadRequestError(`Payment intent status is ${paymentIntent.status}, not succeeded`);
     }
 
-    // Verify application fee is set correctly for Connect payments
-    if (paymentIntent.transfer_data?.destination && !paymentIntent.application_fee_amount) {
-      console.error(`[Payment] WARNING: PaymentIntent ${paymentIntentId} has transfer_data but NO application_fee_amount! All funds will go to connected account.`);
+    // Verify transfer_data.amount is set correctly for Connect payments
+    if (paymentIntent.transfer_data?.destination && !paymentIntent.transfer_data?.amount) {
+      console.warn(`[Payment] WARNING: PaymentIntent ${paymentIntentId} has transfer_data.destination but NO transfer_data.amount!`);
     }
 
     // Get fee breakdown from booking (should already be calculated)
@@ -735,27 +747,27 @@ export const paymentService = {
         throw new BadRequestError('Payment intent ID not found');
       }
 
-      // Verify PaymentIntent has application fee before processing
+      // Verify PaymentIntent has transfer_data.amount before processing
       try {
         const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+        const companyReceives = paymentIntent.transfer_data?.amount ?? null;
         console.log(`[Payment Webhook] PaymentIntent verification for booking ${bookingId}:`, {
           paymentIntentId: paymentIntent.id,
           customerPaid: paymentIntent.amount,
-          application_fee_amount: paymentIntent.application_fee_amount,
           transfer_data: paymentIntent.transfer_data,
-          hasApplicationFee: !!paymentIntent.application_fee_amount,
+          companyReceives: companyReceives,
+          platformRetains: companyReceives !== null ? paymentIntent.amount - companyReceives : null,
           hasTransferData: !!paymentIntent.transfer_data,
         });
 
-        if (paymentIntent.transfer_data?.destination && !paymentIntent.application_fee_amount) {
-          console.error(`[Payment Webhook] CRITICAL: PaymentIntent ${paymentIntentId} has transfer_data but NO application_fee_amount! All funds will go to connected account.`);
-        } else if (paymentIntent.transfer_data?.destination && paymentIntent.application_fee_amount) {
-          const expectedCompanyReceives = paymentIntent.amount - paymentIntent.application_fee_amount;
-          console.log(`[Payment Webhook] Application fee correctly applied:`, {
+        if (paymentIntent.transfer_data?.destination && !paymentIntent.transfer_data?.amount) {
+          console.warn(`[Payment Webhook] WARNING: PaymentIntent ${paymentIntentId} has transfer_data.destination but NO transfer_data.amount!`);
+        } else if (paymentIntent.transfer_data?.destination && paymentIntent.transfer_data?.amount) {
+          console.log(`[Payment Webhook] Connect split verification:`, {
             customerPaid: `£${(paymentIntent.amount / 100).toFixed(2)}`,
-            applicationFee: `£${(paymentIntent.application_fee_amount / 100).toFixed(2)}`,
-            expectedCompanyReceives: `£${(expectedCompanyReceives / 100).toFixed(2)}`,
-            note: 'Company will receive expectedCompanyReceives minus Stripe processing fees',
+            transferAmountToCompany: `£${(companyReceives! / 100).toFixed(2)}`,
+            platformRetains: `£${((paymentIntent.amount - companyReceives!) / 100).toFixed(2)}`,
+            note: 'Company receives transfer_data.amount; platform keeps remainder (admin fee + processing fee). Stripe processing fee is deducted at the charge level.',
           });
         }
       } catch (error: any) {
@@ -1005,6 +1017,22 @@ export const paymentService = {
       if (paymentIntentId) {
         const payment = await paymentRepository.findByStripePaymentIntentId(paymentIntentId);
         if (payment) {
+          // Retrieve payment intent to check if it had a transfer (Stripe Connect)
+          try {
+            const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+            if (paymentIntent.transfer_data?.destination) {
+              console.log(`[Payment Webhook] Refund processed for Connect payment:`, {
+                paymentId: payment.id,
+                paymentIntentId: paymentIntent.id,
+                transferDestination: paymentIntent.transfer_data.destination,
+                originalTransferAmount: paymentIntent.transfer_data.amount,
+                note: 'Transfer reversal handled automatically by Stripe when reverse_transfer=true',
+              });
+            }
+          } catch (error: any) {
+            console.warn(`[Payment Webhook] Could not retrieve PaymentIntent for refund verification:`, error.message);
+          }
+          
           await paymentRepository.updateStatus(payment.id, 'REFUNDED');
           await paymentRepository.updateBookingPaymentStatus(payment.bookingId, 'REFUNDED');
 
@@ -1453,10 +1481,17 @@ export const paymentService = {
     }
 
     // Process refund via Stripe
+    // For Stripe Connect payments with transfer_data.amount, we need to reverse the transfer
+    // This ensures the connected account (company) returns the proportional amount
     const refundAmountInCents = Math.round(refundAmount * 100);
+    
+    // Check if this payment used Stripe Connect (has transfer_data)
+    const hasTransfer = paymentIntent.transfer_data?.destination;
+    
     await stripe.refunds.create({
       charge: chargeId,
       amount: refundAmountInCents,
+      reverse_transfer: hasTransfer ? true : undefined, // Reverse transfer for Connect payments
       reason: dto.reason ? 'requested_by_customer' : undefined,
       metadata: {
         paymentId: payment.id,
@@ -1464,6 +1499,16 @@ export const paymentService = {
         refundReason: dto.reason || '',
       },
     });
+    
+    if (hasTransfer) {
+      console.log(`[Payment] Refund processed with transfer reversal for payment ${payment.id}:`, {
+        paymentId: payment.id,
+        refundAmount: refundAmountInCents,
+        transferDestination: paymentIntent.transfer_data?.destination,
+        transferAmount: paymentIntent.transfer_data?.amount,
+        note: 'Transfer to connected account will be automatically reversed proportionally by Stripe',
+      });
+    }
 
     // Update payment record
     const newRefundedAmount = currentRefundedAmount + refundAmount;
