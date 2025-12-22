@@ -733,6 +733,102 @@ export const paymentService = {
         }
       }
 
+      // Check if this is an extra charge payment
+      const paymentType = session.metadata?.type;
+      if (paymentType === 'EXTRA_CHARGE') {
+        const extraChargeId = session.metadata?.extraChargeId || session.client_reference_id;
+        if (!extraChargeId) {
+          console.error(`[Payment Webhook] Extra charge ID not found in session metadata`);
+          throw new BadRequestError('Extra charge ID not found in session metadata');
+        }
+
+        const paymentIntentId = session.payment_intent as string;
+        if (!paymentIntentId) {
+          console.error(`[Payment Webhook] Payment intent ID not found in session`);
+          throw new BadRequestError('Payment intent ID not found');
+        }
+
+        // Handle extra charge payment
+        try {
+          console.log(`[Payment Webhook] Processing extra charge payment via checkout.session.completed:`, {
+            extraChargeId,
+            paymentIntentId,
+            sessionId: session.id,
+          });
+
+          const { extraChargeRepository } = await import('../extra-charges/repository');
+          const extraCharge = await extraChargeRepository.findById(extraChargeId);
+
+          if (!extraCharge) {
+            console.error(`[Payment Webhook] Extra charge not found: ${extraChargeId}`);
+            throw new NotFoundError('Extra charge not found');
+          }
+
+          // Check if already paid
+          if (extraCharge.status === 'PAID') {
+            console.log(`[Payment Webhook] Extra charge ${extraChargeId} is already paid, skipping update`);
+            return { received: true, message: 'Extra charge already paid', eventType: event.type, extraChargeId };
+          }
+
+          // Verify payment intent succeeded
+          const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+          if (paymentIntent.status !== 'succeeded') {
+            console.error(`[Payment Webhook] Payment intent ${paymentIntentId} status is ${paymentIntent.status}, not succeeded`);
+            throw new BadRequestError(`Payment intent status is ${paymentIntent.status}, not succeeded`);
+          }
+
+          console.log(`[Payment Webhook] Updating extra charge ${extraChargeId} to PAID status`);
+          
+          // Update extra charge status
+          await extraChargeRepository.updateStatus(extraChargeId, 'PAID', {
+            paidAt: new Date(),
+            stripePaymentIntentId: paymentIntentId,
+          });
+
+          console.log(`[Payment Webhook] Successfully updated extra charge ${extraChargeId} to PAID`);
+
+            // Notify customer - use generic type since EXTRA_CHARGE_PAID might not be defined
+            await createNotification({
+              userId: extraCharge.booking.customerId,
+              type: 'PAYMENT_SUCCESS',
+              title: 'Extra Charge Paid',
+              body: `Your extra charge of £${(extraCharge.totalAmount / 100).toFixed(2)} has been successfully paid for booking ${extraCharge.bookingId}`,
+              metadata: {
+                bookingId: extraCharge.bookingId,
+                extraChargeId: extraCharge.id,
+                totalAmount: extraCharge.totalAmount,
+              },
+            }).catch((err) => {
+              console.error('Failed to create customer notification:', err);
+            });
+
+            // Notify company
+            if (extraCharge.companyId) {
+              await createCompanyNotification(
+                extraCharge.companyId,
+                'PAYMENT_SUCCESS',
+                'Extra Charge Paid',
+                `Extra charge of £${(extraCharge.totalAmount / 100).toFixed(2)} has been paid for booking ${extraCharge.bookingId}`,
+                {
+                  bookingId: extraCharge.bookingId,
+                  extraChargeId: extraCharge.id,
+                }
+              ).catch((err) => {
+                console.error('Failed to create company notification:', err);
+              });
+            }
+
+          return { received: true, message: 'Extra charge payment processed successfully', eventType: event.type, extraChargeId };
+        } catch (error: any) {
+          console.error(`[Payment Webhook] Error processing extra charge payment:`, {
+            error: error.message,
+            stack: error.stack,
+            extraChargeId,
+          });
+          throw error;
+        }
+      }
+
       const bookingId = session.metadata?.bookingId || session.client_reference_id;
 
       if (!bookingId) {
@@ -793,6 +889,94 @@ export const paymentService = {
     // Handle payment success via payment_intent.succeeded (backup/reliable event)
     if (event.type === 'payment_intent.succeeded') {
       const paymentIntent = event.data.object as Stripe.PaymentIntent;
+      
+      // Check if this is an extra charge payment
+      const paymentType = paymentIntent.metadata?.type;
+      if (paymentType === 'EXTRA_CHARGE') {
+        const extraChargeId = paymentIntent.metadata?.extraChargeId;
+        if (!extraChargeId) {
+          console.error(`[Payment Webhook] Extra charge ID not found in payment intent metadata`);
+          return { received: true, message: 'Extra charge ID not found in payment intent metadata', eventType: event.type };
+        }
+
+        try {
+          const { extraChargeRepository } = await import('../extra-charges/repository');
+          
+          // Try to find by payment intent ID first (in case checkout.session.completed already processed it)
+          let extraCharge = await extraChargeRepository.findByStripePaymentIntentId(paymentIntent.id);
+          
+          // If not found by payment intent ID, find by extraChargeId from metadata
+          if (!extraCharge && extraChargeId) {
+            extraCharge = await extraChargeRepository.findById(extraChargeId);
+          }
+          
+          // Log for debugging
+          if (!extraCharge) {
+            console.error(`[Payment Webhook] Extra charge not found:`, {
+              extraChargeId,
+              paymentIntentId: paymentIntent.id,
+              metadata: paymentIntent.metadata,
+            });
+          }
+
+          if (extraCharge) {
+            // Check if already paid
+            if (extraCharge.status === 'PAID') {
+              return { received: true, message: 'Extra charge already paid', eventType: event.type, extraChargeId: extraCharge.id };
+            }
+
+            // Update extra charge status
+            await extraChargeRepository.updateStatus(extraCharge.id, 'PAID', {
+              paidAt: new Date(),
+              stripePaymentIntentId: paymentIntent.id,
+            });
+
+            // Notify customer - use generic type since EXTRA_CHARGE_PAID might not be defined
+            await createNotification({
+              userId: extraCharge.booking.customerId,
+              type: 'PAYMENT_SUCCESS',
+              title: 'Extra Charge Paid',
+              body: `Your extra charge of £${(extraCharge.totalAmount / 100).toFixed(2)} has been successfully paid for booking ${extraCharge.bookingId}`,
+              metadata: {
+                bookingId: extraCharge.bookingId,
+                extraChargeId: extraCharge.id,
+                totalAmount: extraCharge.totalAmount,
+              },
+            }).catch((err) => {
+              console.error('Failed to create customer notification:', err);
+            });
+
+            // Notify company
+            if (extraCharge.companyId) {
+              await createCompanyNotification(
+                extraCharge.companyId,
+                'PAYMENT_SUCCESS',
+                'Extra Charge Paid',
+                `Extra charge of £${(extraCharge.totalAmount / 100).toFixed(2)} has been paid for booking ${extraCharge.bookingId}`,
+                {
+                  bookingId: extraCharge.bookingId,
+                  extraChargeId: extraCharge.id,
+                }
+              ).catch((err) => {
+                console.error('Failed to create company notification:', err);
+              });
+            }
+
+            return { received: true, message: 'Extra charge payment processed successfully', eventType: event.type, extraChargeId: extraCharge.id };
+          } else {
+            console.error(`[Payment Webhook] Extra charge not found with ID: ${extraChargeId}`);
+            return { received: true, message: `Extra charge not found: ${extraChargeId}`, eventType: event.type };
+          }
+        } catch (error: any) {
+          console.error(`[Payment Webhook] Error processing extra charge payment via payment_intent.succeeded:`, {
+            error: error.message,
+            stack: error.stack,
+            extraChargeId,
+          });
+          // Don't throw - return success to prevent Stripe retries for extra charges
+          return { received: true, message: `Extra charge payment received but processing failed: ${error.message}`, eventType: event.type, error: error.message };
+        }
+      }
       
       // Try to find booking by payment intent ID
       const existingPayment = await paymentRepository.findByStripePaymentIntentId(paymentIntent.id);

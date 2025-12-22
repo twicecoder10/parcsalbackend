@@ -110,6 +110,23 @@ enum DeliveryMethod {
   DELIVERED_TO_RECEIVER
 }
 
+enum ExtraChargeReason {
+  EXCESS_WEIGHT
+  EXTRA_ITEMS
+  OVERSIZE
+  REPACKING
+  LATE_DROP_OFF
+  OTHER
+}
+
+enum ExtraChargeStatus {
+  PENDING
+  PAID
+  DECLINED
+  EXPIRED
+  CANCELLED
+}
+
 model User {
   id                    String    @id @default(uuid())
   email                 String    @unique
@@ -146,6 +163,7 @@ model User {
   reviews        Review[]
   customerChatRooms ChatRoom[] @relation("CustomerChatRooms")
   sentMessages    Message[]
+  createdExtraCharges BookingExtraCharge[] @relation("ExtraChargeCreator")
 
   @@index([email])
   @@index([companyId])
@@ -195,6 +213,7 @@ model Company {
   reviews          Review[]
   chatRooms        ChatRoom[]
   payoutRequests   PayoutRequest[]
+  extraCharges     BookingExtraCharge[]
 
   @@index([slug])
   @@index([isVerified])
@@ -340,6 +359,7 @@ model Booking {
   payment Payment?
   review  Review?
   chatRoom ChatRoom?
+  extraCharges BookingExtraCharge[]
 
   @@index([customerId])
   @@index([companyId])
@@ -522,5 +542,35 @@ model PayoutRequest {
   @@index([companyId])
   @@index([status])
   @@index([createdAt])
+}
+
+model BookingExtraCharge {
+  id                  String   @id @default(cuid())
+  bookingId            String
+  companyId            String
+  createdByUserId      String
+  reason               ExtraChargeReason
+  description          String?
+  evidenceUrls         String[] @default([])
+  baseAmount           Int      // minor units
+  adminFeeAmount       Int      // minor units
+  processingFeeAmount  Int      // minor units
+  totalAmount          Int      // minor units
+  status               ExtraChargeStatus @default(PENDING) // PENDING | PAID | DECLINED | EXPIRED | CANCELLED
+  stripeSessionId      String?
+  stripePaymentIntentId String?
+  expiresAt            DateTime
+  paidAt               DateTime?
+  declinedAt           DateTime?
+  cancelledAt          DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  booking              Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  company              Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy            User     @relation("ExtraChargeCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([companyId])
+  @@index([status])
 }
 

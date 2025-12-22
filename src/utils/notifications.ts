@@ -18,7 +18,11 @@ export type NotificationType =
   | 'TEAM_MEMBER_REMOVED'
   | 'SUBSCRIPTION_ACTIVE'
   | 'SUBSCRIPTION_CANCELLED'
-  | 'SUBSCRIPTION_PAST_DUE';
+  | 'SUBSCRIPTION_PAST_DUE'
+  | 'EXTRA_CHARGE_REQUESTED'
+  | 'EXTRA_CHARGE_PAID'
+  | 'EXTRA_CHARGE_DECLINED'
+  | 'EXTRA_CHARGE_CANCELLED';
 
 export interface CreateNotificationData {
   userId: string;
