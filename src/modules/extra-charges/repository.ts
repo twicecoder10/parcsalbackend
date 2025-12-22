@@ -12,6 +12,15 @@ type ExtraChargeWithRelations = Prisma.BookingExtraChargeGetPayload<{
             fullName: true;
           };
         };
+        shipmentSlot: {
+          select: {
+            originCity: true;
+            originCountry: true;
+            destinationCity: true;
+            destinationCountry: true;
+            mode: true;
+          };
+        };
       };
     };
     company: {
@@ -62,6 +71,15 @@ export const extraChargeRepository = {
                 fullName: true,
               },
             },
+            shipmentSlot: {
+              select: {
+                originCity: true,
+                originCountry: true,
+                destinationCity: true,
+                destinationCountry: true,
+                mode: true,
+              },
+            },
           },
         },
         company: {
@@ -94,6 +112,15 @@ export const extraChargeRepository = {
                 id: true,
                 email: true,
                 fullName: true,
+              },
+            },
+            shipmentSlot: {
+              select: {
+                originCity: true,
+                originCountry: true,
+                destinationCity: true,
+                destinationCountry: true,
+                mode: true,
               },
             },
           },
@@ -169,6 +196,15 @@ export const extraChargeRepository = {
                 fullName: true,
               },
             },
+            shipmentSlot: {
+              select: {
+                originCity: true,
+                originCountry: true,
+                destinationCity: true,
+                destinationCountry: true,
+                mode: true,
+              },
+            },
           },
         },
         company: {
@@ -203,6 +239,15 @@ export const extraChargeRepository = {
                 fullName: true,
               },
             },
+            shipmentSlot: {
+              select: {
+                originCity: true,
+                originCountry: true,
+                destinationCity: true,
+                destinationCountry: true,
+                mode: true,
+              },
+            },
           },
         },
         company: {
@@ -235,6 +280,15 @@ export const extraChargeRepository = {
                 id: true,
                 email: true,
                 fullName: true,
+              },
+            },
+            shipmentSlot: {
+              select: {
+                originCity: true,
+                originCountry: true,
+                destinationCity: true,
+                destinationCountry: true,
+                mode: true,
               },
             },
           },

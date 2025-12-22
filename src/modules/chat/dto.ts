@@ -1,17 +1,25 @@
 import { z } from 'zod';
+import { bookingIdValidator } from '../../utils/validators';
 
 export const createChatRoomSchema = z.object({
   body: z.object({
     companyId: z.string().uuid('Invalid company ID'),
-    bookingId: z.string().uuid('Invalid booking ID').optional().nullable(),
+    bookingId: bookingIdValidator.optional().nullable(),
   }),
 });
 
 export const sendMessageSchema = z.object({
   body: z.object({
-    chatRoomId: z.string().uuid('Invalid chat room ID'),
+    chatRoomId: z.string().uuid('Invalid chat room ID').optional(),
+    customerId: z.string().uuid('Invalid customer ID').optional(),
+    bookingId: bookingIdValidator.optional().nullable(),
     content: z.string().min(1, 'Message content cannot be empty').max(5000, 'Message content too long'),
-  }),
+  }).refine(
+    (data) => data.chatRoomId || data.customerId,
+    {
+      message: 'Either chatRoomId or customerId must be provided',
+    }
+  ),
 });
 
 export const getChatRoomsSchema = z.object({

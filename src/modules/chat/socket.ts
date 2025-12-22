@@ -84,7 +84,6 @@ export function setupChatSocket(io: SocketIOServer) {
       }
     }
 
-    console.log(`User ${userId} (${userRole}) connected to chat`);
 
     // Join a chat room
     // Note: Access verification is minimal here to avoid DB queries
@@ -119,9 +118,9 @@ export function setupChatSocket(io: SocketIOServer) {
     });
 
     // Send a message
-    socket.on('message:send', async (data: { chatRoomId?: string; companyId?: string; bookingId?: string | null; content: string }) => {
+    socket.on('message:send', async (data: { chatRoomId?: string; companyId?: string; customerId?: string; bookingId?: string | null; content: string }) => {
       try {
-        const { chatRoomId, companyId, bookingId, content } = data;
+        const { chatRoomId, companyId, customerId, bookingId, content } = data;
 
         if (!content || content.trim().length === 0) {
           socket.emit('error', { message: 'Message content cannot be empty' });
@@ -134,6 +133,7 @@ export function setupChatSocket(io: SocketIOServer) {
         }
 
         let chatRoom;
+        let isNewChatRoom = false;
 
         // If chatRoomId is provided, use existing room
         if (chatRoomId) {
@@ -142,13 +142,8 @@ export function setupChatSocket(io: SocketIOServer) {
             socket.emit('error', { message: 'Chat room not found' });
             return;
           }
-        } else if (companyId) {
-          // Create chat room on first message
-          if (userRole !== 'CUSTOMER') {
-            socket.emit('error', { message: 'Only customers can start new conversations' });
-            return;
-          }
-
+        } else if (companyId && userRole === 'CUSTOMER') {
+          // Customer creating chat room with company
           // Verify company exists
           const company = await prisma.company.findUnique({
             where: { id: companyId },
@@ -195,9 +190,84 @@ export function setupChatSocket(io: SocketIOServer) {
               companyId,
               bookingId: bookingId || null,
             });
+            isNewChatRoom = true;
+          }
+        } else if ((customerId || bookingId) && (userRole === 'COMPANY_ADMIN' || userRole === 'COMPANY_STAFF')) {
+          // Company user creating chat room with customer
+          if (!socket.user?.companyId) {
+            socket.emit('error', { message: 'User is not associated with a company' });
+            return;
+          }
+
+          let resolvedBookingId = bookingId || null;
+          let resolvedCustomerId: string;
+
+          // If bookingId is provided, get customerId from it (preferred method)
+          if (bookingId) {
+            const booking = await prisma.booking.findUnique({
+              where: { id: bookingId },
+              select: {
+                id: true,
+                customerId: true,
+                companyId: true,
+              },
+            });
+
+            if (!booking) {
+              socket.emit('error', { message: 'Booking not found' });
+              return;
+            }
+
+            if (booking.companyId !== socket.user.companyId) {
+              socket.emit('error', { message: 'Booking does not belong to your company' });
+              return;
+            }
+
+            // Use customerId from booking
+            resolvedCustomerId = booking.customerId;
+
+            // If customerId was also provided, verify it matches
+            if (customerId && resolvedCustomerId !== customerId) {
+              socket.emit('error', { message: 'Customer ID does not match booking' });
+              return;
+            }
+          } else if (customerId) {
+            // Only customerId provided (no bookingId)
+            // Verify customer exists
+            const customer = await prisma.user.findUnique({
+              where: { id: customerId },
+              select: { id: true, role: true },
+            });
+
+            if (!customer || customer.role !== 'CUSTOMER') {
+              socket.emit('error', { message: 'Customer not found' });
+              return;
+            }
+
+            resolvedCustomerId = customerId;
+          } else {
+            socket.emit('error', { message: 'Either customerId or bookingId must be provided' });
+            return;
+          }
+
+          // Check if chat room already exists
+          chatRoom = await chatRepository.findChatRoomByParticipants(
+            resolvedCustomerId,
+            socket.user.companyId,
+            resolvedBookingId || null
+          );
+
+          // If no chat room exists, create it now (first message)
+          if (!chatRoom) {
+            chatRoom = await chatRepository.createChatRoom({
+              customerId: resolvedCustomerId,
+              companyId: socket.user.companyId,
+              bookingId: resolvedBookingId || null,
+            });
+            isNewChatRoom = true;
           }
         } else {
-          socket.emit('error', { message: 'Either chatRoomId or companyId must be provided' });
+          socket.emit('error', { message: 'Either chatRoomId, (companyId for customers), or (customerId/bookingId for company users) must be provided' });
           return;
         }
 
@@ -271,9 +341,53 @@ export function setupChatSocket(io: SocketIOServer) {
           createdAt: messageResult.createdAt,
         });
 
-        // Notify the other party if they're not in the room
+        // Determine the other party's user ID
         const otherUserId = userRole === 'CUSTOMER' ? null : chatRoom.customerId;
+        const otherCompanyId = userRole === 'CUSTOMER' ? chatRoom.companyId : null;
+
+        // If this was a new chat room (first message), notify both parties
+        if (isNewChatRoom) {
+          // Fetch full chat room with relations for the event
+          const fullChatRoom = await chatRepository.findChatRoomById(chatRoom.id);
+          if (!fullChatRoom) {
+            socket.emit('error', { message: 'Chat room not found after creation' });
+            return;
+          }
+
+          // Type assertion to access relations
+          const fullChatRoomWithRelations = fullChatRoom as typeof fullChatRoom & {
+            customer?: { id: string; email: string; fullName: string | null };
+            company?: { id: string; name: string; slug: string; logoUrl: string | null };
+            booking?: { id: string; status: string } | null;
+          };
+
+          const chatRoomCreatedData = {
+            chatRoomId: fullChatRoom.id,
+            companyId: fullChatRoom.companyId,
+            customerId: fullChatRoom.customerId,
+            bookingId: fullChatRoom.bookingId,
+            // Include basic info for the frontend to display
+            customer: fullChatRoomWithRelations.customer,
+            company: fullChatRoomWithRelations.company,
+            booking: fullChatRoomWithRelations.booking,
+          };
+
+          // Notify the sender
+          socket.emit('chatRoom:created', chatRoomCreatedData);
+
+          // Notify the receiver (other party)
+          if (otherUserId) {
+            // Notify customer about new chat room from company
+            io.to(`user:${otherUserId}`).emit('chatRoom:created', chatRoomCreatedData);
+          } else if (otherCompanyId) {
+            // Notify all company users about new chat room from customer
+            io.to(`company:${otherCompanyId}`).emit('chatRoom:created', chatRoomCreatedData);
+          }
+        }
+
+        // Notify the other party about new message (for existing rooms or new rooms)
         if (otherUserId) {
+          // Notify customer about new message from company
           io.to(`user:${otherUserId}`).emit('chatRoom:newMessage', {
             chatRoomId: chatRoom.id,
             message: {
@@ -282,14 +396,15 @@ export function setupChatSocket(io: SocketIOServer) {
               createdAt: messageResult.createdAt,
             },
           });
-        }
-
-        // If this was a new chat room (first message), notify the sender
-        if (!chatRoomId) {
-          socket.emit('chatRoom:created', {
+        } else if (otherCompanyId) {
+          // Notify all company users about new message from customer
+          io.to(`company:${otherCompanyId}`).emit('chatRoom:newMessage', {
             chatRoomId: chatRoom.id,
-            companyId: chatRoom.companyId,
-            bookingId: chatRoom.bookingId,
+            message: {
+              id: messageResult.id,
+              content: messageResult.content,
+              createdAt: messageResult.createdAt,
+            },
           });
         }
       } catch (error) {
@@ -304,7 +419,7 @@ export function setupChatSocket(io: SocketIOServer) {
 
     // Handle disconnection
     socket.on('disconnect', () => {
-      console.log(`User ${userId} disconnected from chat`);
+      // User disconnected
     });
   });
 }

@@ -11,6 +11,14 @@ export function errorHandler(
 ) {
   // Handle known operational errors
   if (err instanceof AppError) {
+    // Log 401 errors for debugging authentication issues
+    if (err.statusCode === 401) {
+      console.warn(`[Auth Error] ${err.message}`, {
+        path: _req.path,
+        method: _req.method,
+        hasAuthHeader: !!_req.headers.authorization,
+      });
+    }
     return res.status(err.statusCode).json({
       status: 'error',
       message: err.message,

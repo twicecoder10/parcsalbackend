@@ -135,16 +135,6 @@ export const paymentService = {
         },
       };
 
-      console.log(`[Payment] Using Stripe Connect for booking ${booking.id}:`, {
-        companyId: company.id,
-        stripeAccountId: (company as any).stripeAccountId,
-        customerPays: charges.totalAmount,
-        companyReceives: charges.baseAmount,
-        platformRetains: charges.totalAmount - charges.baseAmount,
-        platformAdminFee: charges.adminFeeAmount,
-        processingFeeChargedToCustomer: charges.processingFeeAmount,
-        note: 'Company receives transfer_data.amount; platform keeps remainder (admin fee + processing fee). Stripe processing fee is deducted at the charge level.',
-      });
     } else {
       console.warn(`[Payment] Company ${booking.companyId} does not have Stripe Connect enabled. Payment will go to platform account.`, {
         hasStripeAccountId: !!(company && (company as any).stripeAccountId),
@@ -155,30 +145,18 @@ export const paymentService = {
     // Create Stripe checkout session
     const session = await stripe.checkout.sessions.create(sessionParams);
 
-    // Log session details for debugging
+    // Verify payment intent if using Connect
     if (sessionParams.payment_intent_data?.transfer_data?.destination) {
-      console.log(`[Payment] Checkout session created with Connect:`, {
-        sessionId: session.id,
-        paymentIntentId: session.payment_intent,
-        transferDestination: sessionParams.payment_intent_data.transfer_data.destination,
-        transferAmount: sessionParams.payment_intent_data.transfer_data.amount,
-        totalAmount: charges.totalAmount,
-      });
+      // Verify transfer amount is set
+      if (!sessionParams.payment_intent_data.transfer_data.amount) {
+        console.warn(`[Payment] WARNING: PaymentIntent has transfer_data.destination but NO transfer_data.amount!`);
+      }
 
       // Verify PaymentIntent was created with transfer_data (if payment intent exists)
       if (session.payment_intent && typeof session.payment_intent === 'string') {
         try {
           const paymentIntent = await stripe.paymentIntents.retrieve(session.payment_intent);
-          const companyReceives = paymentIntent.transfer_data?.amount ?? null;
-          console.log(`[Payment] PaymentIntent verification:`, {
-            paymentIntentId: paymentIntent.id,
-            amount: paymentIntent.amount,
-            transfer_data: paymentIntent.transfer_data,
-            companyReceives: companyReceives,
-            platformRetains: companyReceives !== null ? paymentIntent.amount - companyReceives : null,
-            hasTransferData: !!paymentIntent.transfer_data,
-          });
-
+          
           if (paymentIntent.transfer_data?.destination && !paymentIntent.transfer_data?.amount) {
             console.warn(`[Payment] WARNING: PaymentIntent ${paymentIntent.id} has transfer_data.destination but NO transfer_data.amount!`);
           }
@@ -201,17 +179,7 @@ export const paymentService = {
     // Get payment intent from Stripe
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
 
-    // Log PaymentIntent details for debugging Connect payments
-    const companyReceives = paymentIntent.transfer_data?.amount ?? null;
-    console.log(`[Payment] Processing payment for booking ${bookingId}:`, {
-      paymentIntentId: paymentIntent.id,
-      amount: paymentIntent.amount,
-      transfer_data: paymentIntent.transfer_data,
-      companyReceives: companyReceives,
-      platformRetains: companyReceives !== null ? paymentIntent.amount - companyReceives : null,
-      on_behalf_of: paymentIntent.on_behalf_of,
-      transfer_data_destination: paymentIntent.transfer_data?.destination,
-    });
+    // Process payment for booking
 
     // Get booking
     const booking = await prisma.booking.findUnique({
@@ -750,12 +718,6 @@ export const paymentService = {
 
         // Handle extra charge payment
         try {
-          console.log(`[Payment Webhook] Processing extra charge payment via checkout.session.completed:`, {
-            extraChargeId,
-            paymentIntentId,
-            sessionId: session.id,
-          });
-
           const { extraChargeRepository } = await import('../extra-charges/repository');
           const extraCharge = await extraChargeRepository.findById(extraChargeId);
 
@@ -766,7 +728,6 @@ export const paymentService = {
 
           // Check if already paid
           if (extraCharge.status === 'PAID') {
-            console.log(`[Payment Webhook] Extra charge ${extraChargeId} is already paid, skipping update`);
             return { received: true, message: 'Extra charge already paid', eventType: event.type, extraChargeId };
           }
 
@@ -777,41 +738,69 @@ export const paymentService = {
             throw new BadRequestError(`Payment intent status is ${paymentIntent.status}, not succeeded`);
           }
 
-          console.log(`[Payment Webhook] Updating extra charge ${extraChargeId} to PAID status`);
-          
           // Update extra charge status
           await extraChargeRepository.updateStatus(extraChargeId, 'PAID', {
             paidAt: new Date(),
             stripePaymentIntentId: paymentIntentId,
           });
 
-          console.log(`[Payment Webhook] Successfully updated extra charge ${extraChargeId} to PAID`);
+          // Fetch updated extra charge with all relations
+          const updatedExtraCharge = await extraChargeRepository.findById(extraChargeId);
+          if (!updatedExtraCharge) {
+            throw new NotFoundError('Extra charge not found after update');
+          }
 
-            // Notify customer - use generic type since EXTRA_CHARGE_PAID might not be defined
+
+            // Notify customer (in-app) - use generic type since EXTRA_CHARGE_PAID might not be defined
             await createNotification({
-              userId: extraCharge.booking.customerId,
+              userId: updatedExtraCharge.booking.customerId,
               type: 'PAYMENT_SUCCESS',
               title: 'Extra Charge Paid',
-              body: `Your extra charge of £${(extraCharge.totalAmount / 100).toFixed(2)} has been successfully paid for booking ${extraCharge.bookingId}`,
+              body: `Your extra charge of £${(updatedExtraCharge.totalAmount / 100).toFixed(2)} has been successfully paid for booking ${updatedExtraCharge.bookingId}`,
               metadata: {
-                bookingId: extraCharge.bookingId,
-                extraChargeId: extraCharge.id,
-                totalAmount: extraCharge.totalAmount,
+                bookingId: updatedExtraCharge.bookingId,
+                extraChargeId: updatedExtraCharge.id,
+                totalAmount: updatedExtraCharge.totalAmount,
               },
             }).catch((err) => {
               console.error('Failed to create customer notification:', err);
             });
 
+            // Send email receipt to customer
+            if (updatedExtraCharge.booking.customer.email && updatedExtraCharge.paidAt) {
+              await emailService.sendExtraChargePaymentReceiptEmail(
+                updatedExtraCharge.booking.customer.email,
+                updatedExtraCharge.booking.customer.fullName || 'Customer',
+                updatedExtraCharge.bookingId,
+                updatedExtraCharge.id,
+                updatedExtraCharge.totalAmount,
+                'gbp',
+                updatedExtraCharge.reason,
+                paymentIntentId,
+                updatedExtraCharge.paidAt,
+                {
+                  originCity: updatedExtraCharge.booking.shipmentSlot.originCity,
+                  originCountry: updatedExtraCharge.booking.shipmentSlot.originCountry,
+                  destinationCity: updatedExtraCharge.booking.shipmentSlot.destinationCity,
+                  destinationCountry: updatedExtraCharge.booking.shipmentSlot.destinationCountry,
+                  mode: updatedExtraCharge.booking.shipmentSlot.mode,
+                },
+                updatedExtraCharge.company.name
+              ).catch((err) => {
+                console.error('Failed to send extra charge payment receipt email:', err);
+              });
+            }
+
             // Notify company
-            if (extraCharge.companyId) {
+            if (updatedExtraCharge.companyId) {
               await createCompanyNotification(
-                extraCharge.companyId,
+                updatedExtraCharge.companyId,
                 'PAYMENT_SUCCESS',
                 'Extra Charge Paid',
-                `Extra charge of £${(extraCharge.totalAmount / 100).toFixed(2)} has been paid for booking ${extraCharge.bookingId}`,
+                `Extra charge of £${(updatedExtraCharge.totalAmount / 100).toFixed(2)} has been paid for booking ${updatedExtraCharge.bookingId}`,
                 {
-                  bookingId: extraCharge.bookingId,
-                  extraChargeId: extraCharge.id,
+                  bookingId: updatedExtraCharge.bookingId,
+                  extraChargeId: updatedExtraCharge.id,
                 }
               ).catch((err) => {
                 console.error('Failed to create company notification:', err);
@@ -846,25 +835,9 @@ export const paymentService = {
       // Verify PaymentIntent has transfer_data.amount before processing
       try {
         const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-        const companyReceives = paymentIntent.transfer_data?.amount ?? null;
-        console.log(`[Payment Webhook] PaymentIntent verification for booking ${bookingId}:`, {
-          paymentIntentId: paymentIntent.id,
-          customerPaid: paymentIntent.amount,
-          transfer_data: paymentIntent.transfer_data,
-          companyReceives: companyReceives,
-          platformRetains: companyReceives !== null ? paymentIntent.amount - companyReceives : null,
-          hasTransferData: !!paymentIntent.transfer_data,
-        });
-
+        
         if (paymentIntent.transfer_data?.destination && !paymentIntent.transfer_data?.amount) {
           console.warn(`[Payment Webhook] WARNING: PaymentIntent ${paymentIntentId} has transfer_data.destination but NO transfer_data.amount!`);
-        } else if (paymentIntent.transfer_data?.destination && paymentIntent.transfer_data?.amount) {
-          console.log(`[Payment Webhook] Connect split verification:`, {
-            customerPaid: `£${(paymentIntent.amount / 100).toFixed(2)}`,
-            transferAmountToCompany: `£${(companyReceives! / 100).toFixed(2)}`,
-            platformRetains: `£${((paymentIntent.amount - companyReceives!) / 100).toFixed(2)}`,
-            note: 'Company receives transfer_data.amount; platform keeps remainder (admin fee + processing fee). Stripe processing fee is deducted at the charge level.',
-          });
         }
       } catch (error: any) {
         console.warn(`[Payment Webhook] Could not retrieve PaymentIntent for verification:`, error.message);
@@ -931,20 +904,51 @@ export const paymentService = {
               stripePaymentIntentId: paymentIntent.id,
             });
 
-            // Notify customer - use generic type since EXTRA_CHARGE_PAID might not be defined
+            // Fetch updated extra charge with all relations
+            const updatedExtraCharge = await extraChargeRepository.findById(extraCharge.id);
+            if (!updatedExtraCharge) {
+              throw new NotFoundError('Extra charge not found after update');
+            }
+
+            // Notify customer (in-app) - use generic type since EXTRA_CHARGE_PAID might not be defined
             await createNotification({
-              userId: extraCharge.booking.customerId,
+              userId: updatedExtraCharge.booking.customerId,
               type: 'PAYMENT_SUCCESS',
               title: 'Extra Charge Paid',
-              body: `Your extra charge of £${(extraCharge.totalAmount / 100).toFixed(2)} has been successfully paid for booking ${extraCharge.bookingId}`,
+              body: `Your extra charge of £${(updatedExtraCharge.totalAmount / 100).toFixed(2)} has been successfully paid for booking ${updatedExtraCharge.bookingId}`,
               metadata: {
-                bookingId: extraCharge.bookingId,
-                extraChargeId: extraCharge.id,
-                totalAmount: extraCharge.totalAmount,
+                bookingId: updatedExtraCharge.bookingId,
+                extraChargeId: updatedExtraCharge.id,
+                totalAmount: updatedExtraCharge.totalAmount,
               },
             }).catch((err) => {
               console.error('Failed to create customer notification:', err);
             });
+
+            // Send email receipt to customer
+            if (updatedExtraCharge.booking.customer.email && updatedExtraCharge.paidAt) {
+              await emailService.sendExtraChargePaymentReceiptEmail(
+                updatedExtraCharge.booking.customer.email,
+                updatedExtraCharge.booking.customer.fullName || 'Customer',
+                updatedExtraCharge.bookingId,
+                updatedExtraCharge.id,
+                updatedExtraCharge.totalAmount,
+                'gbp',
+                updatedExtraCharge.reason,
+                paymentIntent.id,
+                updatedExtraCharge.paidAt,
+                {
+                  originCity: updatedExtraCharge.booking.shipmentSlot.originCity,
+                  originCountry: updatedExtraCharge.booking.shipmentSlot.originCountry,
+                  destinationCity: updatedExtraCharge.booking.shipmentSlot.destinationCity,
+                  destinationCountry: updatedExtraCharge.booking.shipmentSlot.destinationCountry,
+                  mode: updatedExtraCharge.booking.shipmentSlot.mode,
+                },
+                updatedExtraCharge.company.name
+              ).catch((err) => {
+                console.error('Failed to send extra charge payment receipt email:', err);
+              });
+            }
 
             // Notify company
             if (extraCharge.companyId) {
@@ -1202,17 +1206,9 @@ export const paymentService = {
         const payment = await paymentRepository.findByStripePaymentIntentId(paymentIntentId);
         if (payment) {
           // Retrieve payment intent to check if it had a transfer (Stripe Connect)
+          // Transfer reversal is handled automatically by Stripe when reverse_transfer=true
           try {
-            const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-            if (paymentIntent.transfer_data?.destination) {
-              console.log(`[Payment Webhook] Refund processed for Connect payment:`, {
-                paymentId: payment.id,
-                paymentIntentId: paymentIntent.id,
-                transferDestination: paymentIntent.transfer_data.destination,
-                originalTransferAmount: paymentIntent.transfer_data.amount,
-                note: 'Transfer reversal handled automatically by Stripe when reverse_transfer=true',
-              });
-            }
+            await stripe.paymentIntents.retrieve(paymentIntentId);
           } catch (error: any) {
             console.warn(`[Payment Webhook] Could not retrieve PaymentIntent for refund verification:`, error.message);
           }
@@ -1684,15 +1680,7 @@ export const paymentService = {
       },
     });
     
-    if (hasTransfer) {
-      console.log(`[Payment] Refund processed with transfer reversal for payment ${payment.id}:`, {
-        paymentId: payment.id,
-        refundAmount: refundAmountInCents,
-        transferDestination: paymentIntent.transfer_data?.destination,
-        transferAmount: paymentIntent.transfer_data?.amount,
-        note: 'Transfer to connected account will be automatically reversed proportionally by Stripe',
-      });
-    }
+    // Transfer to connected account will be automatically reversed proportionally by Stripe
 
     // Update payment record
     const newRefundedAmount = currentRefundedAmount + refundAmount;

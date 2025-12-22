@@ -8,6 +8,7 @@ import Stripe from 'stripe';
 import { config } from '../../config/env';
 import { createNotification, createCompanyNotification } from '../../utils/notifications';
 import { checkStaffPermission } from '../../utils/permissions';
+import { emailService } from '../../config/email';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -84,7 +85,7 @@ export const extraChargeService = {
 
     const extraCharge = await extraChargeRepository.create(extraChargeData);
 
-    // Notify customer about the extra charge
+    // Notify customer about the extra charge (in-app)
     await createNotification({
       userId: booking.customerId,
       type: 'EXTRA_CHARGE_REQUESTED',
@@ -100,8 +101,30 @@ export const extraChargeService = {
       console.error('Failed to create customer notification:', err);
     });
 
-      // TODO: Add email notification for extra charge request
-      // Email service method sendExtraChargeRequestEmail can be added later
+    // Send email notification to customer
+    if (booking.customer.email) {
+      await emailService.sendExtraChargeRequestEmail(
+        booking.customer.email,
+        booking.customer.fullName || 'Customer',
+        bookingId,
+        extraCharge.id,
+        charges.totalAmount,
+        'gbp',
+        dto.reason,
+        dto.description || null,
+        expiresAt,
+        {
+          originCity: booking.shipmentSlot.originCity,
+          originCountry: booking.shipmentSlot.originCountry,
+          destinationCity: booking.shipmentSlot.destinationCity,
+          destinationCountry: booking.shipmentSlot.destinationCountry,
+          mode: booking.shipmentSlot.mode,
+        },
+        booking.shipmentSlot.company.name
+      ).catch((err) => {
+        console.error('Failed to send extra charge request email:', err);
+      });
+    }
 
     return extraCharge;
   },

@@ -2,6 +2,7 @@ import express, { Express } from 'express';
 import cors from 'cors';
 import { config } from './config/env';
 import { errorHandler } from './middleware/errorHandler';
+import { requestLogger } from './middleware/requestLogger';
 
 // Import routes
 import authRoutes from './modules/auth/routes';
@@ -53,6 +54,9 @@ app.use((req, res, next) => {
 });
 
 app.use(express.urlencoded({ extended: true }));
+
+// Request logging middleware (after body parsers, before routes)
+app.use(requestLogger);
 
 // Health check
 app.get('/health', (_req, res) => {

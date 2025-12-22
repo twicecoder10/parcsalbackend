@@ -265,11 +265,6 @@ export const connectService = {
         stripeAccount: company.stripeAccountId,
       });
 
-      console.log(`[Connect] Balance retrieved for company ${companyId}:`, {
-        stripeAccountId: company.stripeAccountId,
-        available: balance.available,
-        pending: balance.pending,
-      });
 
       // Find GBP balance (or first available)
       const gbpBalance = balance.available.find((b) => b.currency === 'gbp') || balance.available[0];

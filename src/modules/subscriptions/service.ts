@@ -373,16 +373,12 @@ export const subscriptionService = {
           if (company) {
             const steps = (company.onboardingSteps as any) || {};
             if (!steps.payment_setup?.completed) {
-              console.log(`[Sync Subscription] Updating onboarding step 'payment_setup' for company ${companyId}`);
               await onboardingRepository.updateCompanyOnboardingStep(
                 companyId,
                 'payment_setup',
                 true
               );
               onboardingUpdated = true;
-              console.log(`[Sync Subscription] Successfully updated onboarding step for company ${companyId}`);
-            } else {
-              console.log(`[Sync Subscription] Onboarding step 'payment_setup' already completed for company ${companyId}`);
             }
 
             // Trigger user onboarding recalculation
@@ -457,14 +453,12 @@ export const subscriptionService = {
     let onboardingUpdated = false;
     if (updateOnboarding) {
       try {
-        console.log(`[Sync Subscription] Updating onboarding step 'payment_setup' for company ${companyId}`);
         await onboardingRepository.updateCompanyOnboardingStep(
           companyId,
           'payment_setup',
           true
         );
         onboardingUpdated = true;
-        console.log(`[Sync Subscription] Successfully updated onboarding step for company ${companyId}`);
       } catch (err: any) {
         console.error(`[Sync Subscription] Failed to update onboarding step:`, {
           error: err.message,
@@ -480,7 +474,6 @@ export const subscriptionService = {
             true
           );
           onboardingUpdated = true;
-          console.log(`[Sync Subscription] Successfully updated onboarding step on retry for company ${companyId}`);
         } catch (retryErr: any) {
           console.error(`[Sync Subscription] Retry also failed:`, retryErr.message);
         }

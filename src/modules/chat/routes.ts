@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { chatController } from './controller';
-import { authenticate, requireRole } from '../../middleware/auth';
+import { authenticate } from '../../middleware/auth';
 import { validate } from '../../middleware/validator';
 import {
   createChatRoomSchema,
@@ -12,11 +12,10 @@ import {
 
 const router = Router();
 
-// Create chat room (customers only)
+// Create chat room (customers and company users)
 router.post(
   '/rooms',
   authenticate,
-  requireRole('CUSTOMER'),
   validate(createChatRoomSchema),
   chatController.createChatRoom
 );

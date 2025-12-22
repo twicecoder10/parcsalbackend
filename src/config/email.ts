@@ -1235,6 +1235,329 @@ export const emailService = {
     );
   },
 
+  async sendExtraChargeRequestEmail(
+    email: string,
+    customerName: string,
+    bookingId: string,
+    _extraChargeId: string,
+    amount: number,
+    currency: string,
+    reason: string,
+    description: string | null,
+    expiresAt: Date,
+    bookingDetails: {
+      originCity: string;
+      originCountry: string;
+      destinationCity: string;
+      destinationCountry: string;
+      mode: string;
+    },
+    companyName: string
+  ) {
+    const formattedAmount = new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: currency.toUpperCase(),
+    }).format(amount / 100);
+
+    const expiresDate = new Intl.DateTimeFormat('en-GB', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(expiresAt));
+
+    const bookingUrl = `${config.frontendUrl}/bookings/${bookingId}`;
+    const reasonDisplay = reason.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
+
+    const html = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>Additional Charge Requested - Parcsal</title>
+      </head>
+      <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5; line-height: 1.6;">
+        <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f5f5; padding: 20px 0;">
+          <tr>
+            <td align="center" style="padding: 20px 0;">
+              <table role="presentation" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); overflow: hidden;">
+                <!-- Header -->
+                <tr>
+                  <td style="background: linear-gradient(135deg, #FF9800 0%, #FFB74D 100%); padding: 40px 30px; text-align: center;">
+                    <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Additional Charge Requested</h1>
+                    <p style="margin: 12px 0 0 0; color: #ffffff; font-size: 16px; opacity: 0.9;">Action required for your booking</p>
+                  </td>
+                </tr>
+                <!-- Content -->
+                <tr>
+                  <td style="padding: 40px 30px;">
+                    <p style="margin: 0 0 16px 0; color: #1A1A1A; font-size: 16px;">Hello ${customerName},</p>
+                    <p style="margin: 0 0 24px 0; color: #4A4A4A; font-size: 16px;"><strong>${companyName}</strong> has requested an additional charge for your booking. Please review the details below and take action.</p>
+                    
+                    <!-- Charge Details -->
+                    <div style="background-color: #FFF5F0; border-left: 4px solid #FF6B35; padding: 20px; margin: 24px 0; border-radius: 4px;">
+                      <h2 style="margin: 0 0 16px 0; color: #1A1A1A; font-size: 18px; font-weight: 600;">Charge Details</h2>
+                      <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Amount:</strong>
+                            <span style="color: #4A4A4A; font-size: 18px; font-weight: 600;">${formattedAmount}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Reason:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${reasonDisplay}</span>
+                          </td>
+                        </tr>
+                        ${description ? `
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Description:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${description}</span>
+                          </td>
+                        </tr>
+                        ` : ''}
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Expires:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${expiresDate}</span>
+                          </td>
+                        </tr>
+                      </table>
+                    </div>
+
+                    <!-- Booking Details -->
+                    <div style="background-color: #F8F8F8; border-radius: 8px; padding: 24px; margin: 24px 0; border: 1px solid #EEEEEE;">
+                      <h2 style="margin: 0 0 16px 0; color: #1A1A1A; font-size: 18px; font-weight: 600;">Booking Information</h2>
+                      <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Booking ID:</strong>
+                            <span style="color: #4A4A4A; font-size: 13px; font-family: 'Courier New', monospace;">${bookingId}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Route:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${bookingDetails.originCity}, ${bookingDetails.originCountry} → ${bookingDetails.destinationCity}, ${bookingDetails.destinationCountry}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Mode:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px; text-transform: capitalize;">${bookingDetails.mode}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Company:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${companyName}</span>
+                          </td>
+                        </tr>
+                      </table>
+                    </div>
+                    
+                    <!-- CTA Button -->
+                    <table role="presentation" style="width: 100%; margin: 32px 0;">
+                      <tr>
+                        <td align="center" style="padding: 0;">
+                          <a href="${bookingUrl}" style="display: inline-block; background-color: #FF6B35; color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 600; font-size: 16px; text-align: center; box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3);">Review & Pay Charge</a>
+                        </td>
+                      </tr>
+                    </table>
+                    
+                    <div style="background-color: #FFF9E6; border-left: 3px solid #FFB84D; padding: 16px; margin: 24px 0; border-radius: 4px;">
+                      <p style="margin: 0 0 8px 0; color: #856404; font-size: 14px; font-weight: 600;">⏰ Action Required</p>
+                      <p style="margin: 0; color: #856404; font-size: 14px;">Please review and respond to this charge request before it expires. You can pay or decline the charge from your booking page.</p>
+                    </div>
+                  </td>
+                </tr>
+                <!-- Footer -->
+                <tr>
+                  <td style="background-color: #F8F8F8; padding: 24px 30px; text-align: center; border-top: 1px solid #EEEEEE;">
+                    <p style="margin: 0 0 8px 0; color: #999999; font-size: 12px;">© ${new Date().getFullYear()} Parcsal. All rights reserved.</p>
+                    <p style="margin: 0; color: #999999; font-size: 12px;">You're receiving this email because you have a booking on Parcsal.</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
+    `;
+
+    return this.sendEmail(
+      email,
+      `Additional Charge Requested - ${formattedAmount} - Parcsal`,
+      html
+    );
+  },
+
+  async sendExtraChargePaymentReceiptEmail(
+    email: string,
+    customerName: string,
+    bookingId: string,
+    _extraChargeId: string,
+    amount: number,
+    currency: string,
+    reason: string,
+    paymentIntentId: string,
+    paidAt: Date,
+    bookingDetails: {
+      originCity: string;
+      originCountry: string;
+      destinationCity: string;
+      destinationCountry: string;
+      mode: string;
+    },
+    companyName: string
+  ) {
+    const formattedAmount = new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: currency.toUpperCase(),
+    }).format(amount / 100);
+
+    const formattedDate = new Intl.DateTimeFormat('en-GB', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(paidAt));
+
+    const bookingUrl = `${config.frontendUrl}/bookings/${bookingId}`;
+    const reasonDisplay = reason.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
+
+    const html = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>Payment Receipt - Extra Charge - Parcsal</title>
+      </head>
+      <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5; line-height: 1.6;">
+        <table role="presentation" style="width: 100%; border-collapse: collapse; background-color: #f5f5f5; padding: 20px 0;">
+          <tr>
+            <td align="center" style="padding: 20px 0;">
+              <table role="presentation" style="width: 100%; max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); overflow: hidden;">
+                <!-- Header -->
+                <tr>
+                  <td style="background: linear-gradient(135deg, #FF6B35 0%, #FF8C42 100%); padding: 40px 30px; text-align: center;">
+                    <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Payment Receipt</h1>
+                    <p style="margin: 12px 0 0 0; color: #ffffff; font-size: 16px; opacity: 0.9;">Thank you for your payment!</p>
+                  </td>
+                </tr>
+                <!-- Content -->
+                <tr>
+                  <td style="padding: 40px 30px;">
+                    <p style="margin: 0 0 16px 0; color: #1A1A1A; font-size: 16px;">Hello ${customerName},</p>
+                    <p style="margin: 0 0 24px 0; color: #4A4A4A; font-size: 16px;">Your payment for the additional charge has been successfully processed. Below are the details of your transaction:</p>
+                    
+                    <!-- Payment Details -->
+                    <div style="background-color: #F8F8F8; border-radius: 8px; padding: 24px; margin: 24px 0; border: 1px solid #EEEEEE;">
+                      <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 140px;">Payment Amount:</strong>
+                            <span style="color: #4A4A4A; font-size: 16px; font-weight: 600;">${formattedAmount}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 140px;">Payment Date:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${formattedDate}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 140px;">Transaction ID:</strong>
+                            <span style="color: #4A4A4A; font-size: 13px; font-family: 'Courier New', monospace;">${paymentIntentId}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 140px;">Charge Reason:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${reasonDisplay}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 140px;">Booking ID:</strong>
+                            <span style="color: #4A4A4A; font-size: 13px; font-family: 'Courier New', monospace;">${bookingId}</span>
+                          </td>
+                        </tr>
+                      </table>
+                    </div>
+
+                    <!-- Booking Details -->
+                    <div style="background-color: #FFF5F0; border-left: 4px solid #FF6B35; padding: 20px; margin: 24px 0; border-radius: 4px;">
+                      <h2 style="margin: 0 0 16px 0; color: #1A1A1A; font-size: 18px; font-weight: 600;">Booking Details</h2>
+                      <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Route:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${bookingDetails.originCity}, ${bookingDetails.originCountry} → ${bookingDetails.destinationCity}, ${bookingDetails.destinationCountry}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Mode:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px; text-transform: capitalize;">${bookingDetails.mode}</span>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 0;">
+                            <strong style="color: #1A1A1A; font-size: 14px; display: inline-block; min-width: 120px;">Company:</strong>
+                            <span style="color: #4A4A4A; font-size: 14px;">${companyName}</span>
+                          </td>
+                        </tr>
+                      </table>
+                    </div>
+                    
+                    <!-- CTA Button -->
+                    <table role="presentation" style="width: 100%; margin: 32px 0;">
+                      <tr>
+                        <td align="center" style="padding: 0;">
+                          <a href="${bookingUrl}" style="display: inline-block; background-color: #FF6B35; color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 600; font-size: 16px; text-align: center; box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3);">View Booking Details</a>
+                        </td>
+                      </tr>
+                    </table>
+                    
+                    <div style="background-color: #E8F5E9; border-left: 3px solid #4CAF50; padding: 16px; margin: 24px 0; border-radius: 4px;">
+                      <p style="margin: 0 0 8px 0; color: #2E7D32; font-size: 14px; font-weight: 600;">✓ Payment Confirmed</p>
+                      <p style="margin: 0; color: #2E7D32; font-size: 14px;">Your payment has been successfully processed. This email serves as your receipt.</p>
+                    </div>
+                  </td>
+                </tr>
+                <!-- Footer -->
+                <tr>
+                  <td style="background-color: #F8F8F8; padding: 24px 30px; text-align: center; border-top: 1px solid #EEEEEE;">
+                    <p style="margin: 0 0 8px 0; color: #999999; font-size: 12px;">© ${new Date().getFullYear()} Parcsal. All rights reserved.</p>
+                    <p style="margin: 0; color: #999999; font-size: 12px;">This is an automated receipt. Please save this email for your records.</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
+    `;
+
+    return this.sendEmail(
+      email,
+      `Payment Receipt - Extra Charge - ${formattedAmount} - Parcsal`,
+      html
+    );
+  },
+
   async sendAccountDeletionEmail(
     email: string,
     name: string,

@@ -12,24 +12,52 @@ export const chatService = {
       throw new ForbiddenError('Authentication required');
     }
 
-    // Only customers can initiate chat rooms
-    if (req.user.role !== 'CUSTOMER') {
-      throw new ForbiddenError('Only customers can initiate chat rooms');
+    // Customers and company users can create chat rooms
+    const isCustomer = req.user.role === 'CUSTOMER';
+    const isCompanyUser = req.user.role === 'COMPANY_ADMIN' || req.user.role === 'COMPANY_STAFF';
+    
+    if (!isCustomer && !isCompanyUser) {
+      throw new ForbiddenError('Only customers and company users can create chat rooms');
     }
 
-    // Verify company exists
-    const company = await prisma.company.findUnique({
-      where: { id: dto.companyId },
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        logoUrl: true,
-      },
-    });
+    let companyId: string;
+    let customerId: string;
 
-    if (!company) {
-      throw new NotFoundError('Company not found');
+    if (isCustomer) {
+      // For customers: they provide companyId, customerId is themselves
+      companyId = dto.companyId;
+      customerId = req.user.id;
+    } else {
+      // For company users: they use their own companyId, need customerId from bookingId
+      if (!req.user.companyId) {
+        throw new ForbiddenError('User is not associated with a company');
+      }
+      companyId = req.user.companyId;
+
+      // Company admins must provide bookingId to get customerId
+      if (!dto.bookingId) {
+        throw new BadRequestError('bookingId is required for company users to create chat rooms');
+      }
+
+      const booking = await prisma.booking.findUnique({
+        where: { id: dto.bookingId },
+        select: {
+          id: true,
+          customerId: true,
+          companyId: true,
+          status: true,
+        },
+      });
+
+      if (!booking) {
+        throw new NotFoundError('Booking not found');
+      }
+
+      if (booking.companyId !== req.user.companyId) {
+        throw new ForbiddenError('Booking does not belong to your company');
+      }
+
+      customerId = booking.customerId;
     }
 
     // If bookingId is provided, verify it belongs to the customer and company
@@ -48,19 +76,19 @@ export const chatService = {
         throw new NotFoundError('Booking not found');
       }
 
-      if (booking.customerId !== req.user.id) {
+      if (isCustomer && booking.customerId !== req.user.id) {
         throw new ForbiddenError('Booking does not belong to you');
       }
 
-      if (booking.companyId !== dto.companyId) {
+      if (booking.companyId !== companyId) {
         throw new BadRequestError('Booking does not belong to this company');
       }
     }
 
     // Check if chat room already exists (only return if it has messages)
     const existingChatRoom = await chatRepository.findChatRoomByParticipants(
-      req.user.id,
-      dto.companyId,
+      customerId,
+      companyId,
       dto.bookingId || null
     );
 
@@ -75,17 +103,46 @@ export const chatService = {
       }
     }
 
+    // Get company info for return value
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        logoUrl: true,
+      },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
+    // Get customer info for return value
+    const customer = await prisma.user.findUnique({
+      where: { id: customerId },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+      },
+    });
+
+    if (!customer) {
+      throw new NotFoundError('Customer not found');
+    }
+
     // Don't create chat room yet - just return metadata
     // Chat room will be created when first message is sent
     return {
       id: '', // Empty ID indicates room doesn't exist yet
-      customerId: req.user.id,
-      companyId: dto.companyId,
+      customerId,
+      companyId,
       bookingId: dto.bookingId || null,
       customer: {
-        id: req.user.id,
-        email: req.user.email,
-        fullName: req.user.email, // Will be replaced with actual fullName
+        id: customer.id,
+        email: customer.email,
+        fullName: customer.fullName,
       },
       company: {
         id: company.id,
@@ -195,10 +252,69 @@ export const chatService = {
       await checkStaffPermission(req, 'replyToMessage');
     }
 
-    // Verify chat room exists and user has access
-    let chatRoom = await chatRepository.findChatRoomById(dto.chatRoomId);
+    let chatRoom = await chatRepository.findChatRoomById(dto.chatRoomId || '');
 
-    if (!chatRoom) {
+    // If chat room doesn't exist and user is company admin/staff, try to create it
+    if (!chatRoom && (req.user.role === 'COMPANY_ADMIN' || req.user.role === 'COMPANY_STAFF')) {
+      if (!dto.customerId) {
+        throw new BadRequestError('customerId is required when creating a new chat room');
+      }
+
+      if (!req.user.companyId) {
+        throw new ForbiddenError('User is not associated with a company');
+      }
+
+      // Verify customer exists
+      const customer = await prisma.user.findUnique({
+        where: { id: dto.customerId },
+        select: { id: true, role: true },
+      });
+
+      if (!customer || customer.role !== 'CUSTOMER') {
+        throw new NotFoundError('Customer not found');
+      }
+
+      // If bookingId is provided, verify it belongs to the customer and company
+      if (dto.bookingId) {
+        const booking = await prisma.booking.findUnique({
+          where: { id: dto.bookingId },
+          select: {
+            id: true,
+            customerId: true,
+            companyId: true,
+          },
+        });
+
+        if (!booking) {
+          throw new NotFoundError('Booking not found');
+        }
+
+        if (booking.customerId !== dto.customerId) {
+          throw new BadRequestError('Booking does not belong to this customer');
+        }
+
+        if (booking.companyId !== req.user.companyId) {
+          throw new BadRequestError('Booking does not belong to this company');
+        }
+      }
+
+      // Check if chat room already exists
+      chatRoom = await chatRepository.findChatRoomByParticipants(
+        dto.customerId,
+        req.user.companyId,
+        dto.bookingId || null
+      );
+
+      // Create chat room if it doesn't exist
+      if (!chatRoom) {
+        chatRoom = await chatRepository.createChatRoom({
+          customerId: dto.customerId,
+          companyId: req.user.companyId,
+          bookingId: dto.bookingId || null,
+        });
+      }
+    } else if (!chatRoom) {
+      // For customers, chat room must exist
       throw new NotFoundError('Chat room not found');
     }
 
@@ -215,9 +331,9 @@ export const chatService = {
       throw new ForbiddenError('Invalid user role');
     }
 
-    // Create message (chat room must exist at this point)
+    // Create message (chat room exists at this point)
     const message = await chatRepository.createMessage({
-      chatRoomId: dto.chatRoomId,
+      chatRoomId: chatRoom.id,
       senderId: req.user.id,
       content: dto.content,
     });
