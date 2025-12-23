@@ -9,6 +9,7 @@ import { config } from '../../config/env';
 import { createNotification, createCompanyNotification } from '../../utils/notifications';
 import { checkStaffPermission } from '../../utils/permissions';
 import { emailService } from '../../config/email';
+import { generateExtraChargeId } from '../../utils/extraChargeId';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -67,8 +68,12 @@ export const extraChargeService = {
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + (dto.expiresInHours || 48));
 
+    // Generate custom extra charge ID
+    const extraChargeId = await generateExtraChargeId();
+
     // Create extra charge
     const extraChargeData: CreateExtraChargeData = {
+      id: extraChargeId,
       bookingId,
       companyId: req.user.companyId,
       createdByUserId: req.user.id,

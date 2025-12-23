@@ -43,6 +43,7 @@ type ExtraChargeWithRelations = Prisma.BookingExtraChargeGetPayload<{
 
 
 export interface CreateExtraChargeData {
+  id: string;
   bookingId: string;
   companyId: string;
   createdByUserId: string;

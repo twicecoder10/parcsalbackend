@@ -545,7 +545,7 @@ model PayoutRequest {
 }
 
 model BookingExtraCharge {
-  id                  String   @id @default(cuid())
+  id                  String   @id
   bookingId            String
   companyId            String
   createdByUserId      String

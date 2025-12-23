@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { bookingIdValidator } from '../../utils/validators';
+import { bookingIdValidator, extraChargeIdValidator } from '../../utils/validators';
 
 const extraChargeReasonEnum = z.enum([
   'EXCESS_WEIGHT',
@@ -32,21 +32,21 @@ export const listExtraChargesSchema = z.object({
 export const payExtraChargeSchema = z.object({
   params: z.object({
     bookingId: bookingIdValidator,
-    extraChargeId: z.string().min(1, 'Extra charge ID is required'),
+    extraChargeId: extraChargeIdValidator,
   }),
 });
 
 export const declineExtraChargeSchema = z.object({
   params: z.object({
     bookingId: bookingIdValidator,
-    extraChargeId: z.string().min(1, 'Extra charge ID is required'),
+    extraChargeId: extraChargeIdValidator,
   }),
 });
 
 export const cancelExtraChargeSchema = z.object({
   params: z.object({
     bookingId: bookingIdValidator,
-    extraChargeId: z.string().min(1, 'Extra charge ID is required'),
+    extraChargeId: extraChargeIdValidator,
   }),
 });
 

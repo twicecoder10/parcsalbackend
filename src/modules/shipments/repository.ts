@@ -89,6 +89,12 @@ export const shipmentRepository = {
     if (params.search) {
       where.OR = [
         {
+          id: {
+            contains: params.search,
+            mode: 'insensitive',
+          },
+        },
+        {
           originCity: {
             contains: params.search,
             mode: 'insensitive',

@@ -779,7 +779,6 @@ export const shipmentService = {
           select: {
             id: true,
             fullName: true,
-            email: true,
           },
         },
         payment: true,
@@ -794,7 +793,6 @@ export const shipmentService = {
       customer: {
         id: booking.customer.id,
         name: booking.customer.fullName,
-        email: booking.customer.email,
       },
       requestedWeightKg: booking.requestedWeightKg,
       requestedItemsCount: booking.requestedItemsCount,

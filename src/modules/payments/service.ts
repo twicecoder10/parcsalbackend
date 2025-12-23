@@ -1449,32 +1449,156 @@ export const paymentService = {
       throw new ForbiddenError('User must be associated with a company');
     }
 
-    const pagination = parsePagination(query);
     const companyId = req.user.companyId;
 
     // Parse dates
     const dateFrom = query.dateFrom ? new Date(query.dateFrom + 'T00:00:00Z') : undefined;
-    const dateTo = query.dateTo ? new Date(query.dateTo + 'T00:00:00Z') : undefined;
+    const dateTo = query.dateTo ? new Date(query.dateTo + 'T23:59:59Z') : undefined;
 
-    const { payments, total } = await paymentRepository.findByCompanyId(companyId, {
-      ...pagination,
-      status: query.status as any,
-      dateFrom,
-      dateTo,
-      bookingId: query.bookingId,
-      search: query.search,
-    });
+    // Build where clauses for both payment types
+    const whereBookingPayment: any = {
+      booking: {
+        companyId,
+      },
+    };
 
-    // Transform payments to match API response format
-    const transformedPayments = payments.map((payment) => ({
+    const whereExtraCharge: any = {
+      companyId,
+      status: 'PAID', // Only include paid extra charges
+    };
+
+    // Apply status filter (map to extra charge status)
+    if (query.status) {
+      whereBookingPayment.status = query.status;
+      // Only include PAID extra charges when status filter is applied
+      if (query.status !== 'SUCCEEDED') {
+        // If filtering for non-SUCCEEDED statuses, exclude extra charges
+        whereExtraCharge.status = 'NEVER_MATCH';
+      }
+    }
+
+    // Apply date filters
+    if (dateFrom || dateTo) {
+      whereBookingPayment.createdAt = {};
+      whereExtraCharge.paidAt = {}; // Use paidAt for extra charges
+      if (dateFrom) {
+        whereBookingPayment.createdAt.gte = dateFrom;
+        whereExtraCharge.paidAt.gte = dateFrom;
+      }
+      if (dateTo) {
+        const endDate = new Date(dateTo);
+        endDate.setHours(23, 59, 59, 999);
+        whereBookingPayment.createdAt.lte = endDate;
+        whereExtraCharge.paidAt.lte = endDate;
+      }
+    }
+
+    // Apply booking ID filter
+    if (query.bookingId) {
+      whereBookingPayment.bookingId = query.bookingId;
+      whereExtraCharge.bookingId = query.bookingId;
+    }
+
+    // Apply search filter
+    if (query.search) {
+      whereBookingPayment.OR = [
+        { id: { contains: query.search, mode: 'insensitive' } },
+        { bookingId: { contains: query.search, mode: 'insensitive' } },
+        {
+          booking: {
+            customer: {
+              OR: [
+                { fullName: { contains: query.search, mode: 'insensitive' } },
+                { email: { contains: query.search, mode: 'insensitive' } },
+              ],
+            },
+          },
+        },
+      ];
+      whereExtraCharge.OR = [
+        { id: { contains: query.search, mode: 'insensitive' } },
+        { bookingId: { contains: query.search, mode: 'insensitive' } },
+        {
+          booking: {
+            customer: {
+              OR: [
+                { fullName: { contains: query.search, mode: 'insensitive' } },
+                { email: { contains: query.search, mode: 'insensitive' } },
+              ],
+            },
+          },
+        },
+      ];
+    }
+
+    // Fetch both payment types (without pagination - we'll paginate after merging)
+    const [bookingPayments, extraChargePayments] = await Promise.all([
+      prisma.payment.findMany({
+        where: whereBookingPayment,
+        include: {
+          booking: {
+            include: {
+              customer: {
+                select: {
+                  id: true,
+                  fullName: true,
+                },
+              },
+              shipmentSlot: {
+                select: {
+                  id: true,
+                  originCity: true,
+                  originCountry: true,
+                  destinationCity: true,
+                  destinationCountry: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+      prisma.bookingExtraCharge.findMany({
+        where: whereExtraCharge,
+        include: {
+          booking: {
+            include: {
+              customer: {
+                select: {
+                  id: true,
+                  fullName: true,
+                },
+              },
+              shipmentSlot: {
+                select: {
+                  id: true,
+                  originCity: true,
+                  originCountry: true,
+                  destinationCity: true,
+                  destinationCountry: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          paidAt: 'desc',
+        },
+      }),
+    ]);
+
+    // Transform booking payments
+    const transformedBookingPayments = bookingPayments.map((payment) => ({
       id: payment.id,
+      type: 'BOOKING_PAYMENT' as const,
       bookingId: payment.bookingId,
       booking: {
         id: payment.booking.id,
         customer: {
           id: payment.booking.customer.id,
           fullName: payment.booking.customer.fullName,
-          email: payment.booking.customer.email,
         },
         shipmentSlot: {
           id: payment.booking.shipmentSlot.id,
@@ -1485,6 +1609,10 @@ export const paymentService = {
         },
       },
       amount: Number(payment.amount),
+      baseAmount: payment.baseAmount ? Number(payment.baseAmount) / 100 : null,
+      adminFeeAmount: payment.adminFeeAmount ? Number(payment.adminFeeAmount) / 100 : null,
+      processingFeeAmount: payment.processingFeeAmount ? Number(payment.processingFeeAmount) / 100 : null,
+      totalAmount: payment.totalAmount ? Number(payment.totalAmount) / 100 : null,
       currency: payment.currency.toUpperCase(),
       status: payment.status,
       paymentMethod: payment.paymentMethod || 'card',
@@ -1497,9 +1625,71 @@ export const paymentService = {
       updatedAt: payment.updatedAt.toISOString(),
       paidAt: payment.paidAt?.toISOString() || null,
       refundedAt: payment.refundedAt?.toISOString() || null,
+      sortDate: payment.paidAt || payment.createdAt,
     }));
 
-    return createPaginatedResponse(transformedPayments, total, pagination);
+    // Transform extra charge payments
+    const transformedExtraCharges = extraChargePayments.map((extraCharge) => ({
+      id: extraCharge.id,
+      type: 'EXTRA_CHARGE' as const,
+      bookingId: extraCharge.bookingId,
+      booking: {
+        id: extraCharge.booking.id,
+        customer: {
+          id: extraCharge.booking.customer.id,
+          fullName: extraCharge.booking.customer.fullName,
+        },
+        shipmentSlot: {
+          id: extraCharge.booking.shipmentSlot.id,
+          originCity: extraCharge.booking.shipmentSlot.originCity,
+          originCountry: extraCharge.booking.shipmentSlot.originCountry,
+          destinationCity: extraCharge.booking.shipmentSlot.destinationCity,
+          destinationCountry: extraCharge.booking.shipmentSlot.destinationCountry,
+        },
+      },
+      amount: extraCharge.totalAmount / 100, // Convert from pence to pounds
+      baseAmount: extraCharge.baseAmount / 100,
+      adminFeeAmount: extraCharge.adminFeeAmount / 100,
+      processingFeeAmount: extraCharge.processingFeeAmount / 100,
+      totalAmount: extraCharge.totalAmount / 100,
+      currency: 'GBP',
+      status: 'SUCCEEDED', // Extra charges in this list are always paid/succeeded
+      paymentMethod: 'card',
+      stripePaymentIntentId: extraCharge.stripePaymentIntentId || null,
+      stripeChargeId: null,
+      refundedAmount: 0,
+      refundReason: null,
+      extraChargeReason: extraCharge.reason,
+      extraChargeDescription: extraCharge.description,
+      metadata: {
+        type: 'EXTRA_CHARGE',
+        reason: extraCharge.reason,
+        description: extraCharge.description,
+      },
+      createdAt: extraCharge.createdAt.toISOString(),
+      updatedAt: extraCharge.updatedAt.toISOString(),
+      paidAt: extraCharge.paidAt?.toISOString() || null,
+      refundedAt: null,
+      sortDate: extraCharge.paidAt || extraCharge.createdAt,
+    }));
+
+    // Merge and sort by date (most recent first)
+    const allPayments = [...transformedBookingPayments, ...transformedExtraCharges].sort(
+      (a, b) => b.sortDate.getTime() - a.sortDate.getTime()
+    );
+
+    // Apply pagination manually
+    const pagination = parsePagination(query);
+    const total = allPayments.length;
+    const paginatedPayments = allPayments.slice(
+      pagination.offset,
+      pagination.offset + pagination.limit
+    );
+
+    // Remove sortDate from final response
+    const finalPayments = paginatedPayments.map(({ sortDate, ...payment }) => payment);
+
+    return createPaginatedResponse(finalPayments, total, pagination);
   },
 
   async getCompanyPaymentById(req: AuthRequest, paymentId: string) {
@@ -1507,48 +1697,129 @@ export const paymentService = {
       throw new ForbiddenError('User must be associated with a company');
     }
 
+    // Try to find as booking payment first
     const payment = await paymentRepository.findById(paymentId);
 
-    if (!payment) {
+    if (payment) {
+      // Verify the payment belongs to the company
+      if (!payment.booking.companyId || payment.booking.companyId !== req.user.companyId) {
+        throw new ForbiddenError('You do not have permission to view this payment');
+      }
+
+      return {
+        id: payment.id,
+        type: 'BOOKING_PAYMENT',
+        bookingId: payment.bookingId,
+        booking: {
+          id: payment.booking.id,
+          customer: {
+            id: payment.booking.customer.id,
+            fullName: payment.booking.customer.fullName,
+          },
+          shipmentSlot: {
+            id: payment.booking.shipmentSlot.id,
+            originCity: payment.booking.shipmentSlot.originCity,
+            originCountry: payment.booking.shipmentSlot.originCountry,
+            destinationCity: payment.booking.shipmentSlot.destinationCity,
+            destinationCountry: payment.booking.shipmentSlot.destinationCountry,
+          },
+        },
+        amount: Number(payment.amount),
+        baseAmount: payment.baseAmount ? Number(payment.baseAmount) / 100 : null,
+        adminFeeAmount: payment.adminFeeAmount ? Number(payment.adminFeeAmount) / 100 : null,
+        processingFeeAmount: payment.processingFeeAmount ? Number(payment.processingFeeAmount) / 100 : null,
+        totalAmount: payment.totalAmount ? Number(payment.totalAmount) / 100 : null,
+        currency: payment.currency.toUpperCase(),
+        status: payment.status,
+        paymentMethod: payment.paymentMethod || 'card',
+        stripePaymentIntentId: payment.stripePaymentIntentId,
+        stripeChargeId: payment.stripeChargeId || null,
+        refundedAmount: Number(payment.refundedAmount || 0),
+        refundReason: payment.refundReason || null,
+        metadata: payment.metadata || {},
+        createdAt: payment.createdAt.toISOString(),
+        updatedAt: payment.updatedAt.toISOString(),
+        paidAt: payment.paidAt?.toISOString() || null,
+        refundedAt: payment.refundedAt?.toISOString() || null,
+      };
+    }
+
+    // If not found as booking payment, try to find as extra charge
+    const extraCharge = await prisma.bookingExtraCharge.findUnique({
+      where: { id: paymentId },
+      include: {
+        booking: {
+          include: {
+            customer: {
+              select: {
+                id: true,
+                fullName: true,
+              },
+            },
+            shipmentSlot: {
+              select: {
+                id: true,
+                originCity: true,
+                originCountry: true,
+                destinationCity: true,
+                destinationCountry: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!extraCharge) {
       throw new NotFoundError('Payment not found');
     }
 
-    // Verify the payment belongs to the company
-    if (!payment.booking.companyId || payment.booking.companyId !== req.user.companyId) {
+    // Verify the extra charge belongs to the company
+    if (extraCharge.companyId !== req.user.companyId) {
       throw new ForbiddenError('You do not have permission to view this payment');
     }
 
     return {
-      id: payment.id,
-      bookingId: payment.bookingId,
+      id: extraCharge.id,
+      type: 'EXTRA_CHARGE',
+      bookingId: extraCharge.bookingId,
       booking: {
-        id: payment.booking.id,
+        id: extraCharge.booking.id,
         customer: {
-          id: payment.booking.customer.id,
-          fullName: payment.booking.customer.fullName,
-          email: payment.booking.customer.email,
+          id: extraCharge.booking.customer.id,
+          fullName: extraCharge.booking.customer.fullName,
         },
         shipmentSlot: {
-          id: payment.booking.shipmentSlot.id,
-          originCity: payment.booking.shipmentSlot.originCity,
-          originCountry: payment.booking.shipmentSlot.originCountry,
-          destinationCity: payment.booking.shipmentSlot.destinationCity,
-          destinationCountry: payment.booking.shipmentSlot.destinationCountry,
+          id: extraCharge.booking.shipmentSlot.id,
+          originCity: extraCharge.booking.shipmentSlot.originCity,
+          originCountry: extraCharge.booking.shipmentSlot.originCountry,
+          destinationCity: extraCharge.booking.shipmentSlot.destinationCity,
+          destinationCountry: extraCharge.booking.shipmentSlot.destinationCountry,
         },
       },
-      amount: Number(payment.amount),
-      currency: payment.currency.toUpperCase(),
-      status: payment.status,
-      paymentMethod: payment.paymentMethod || 'card',
-      stripePaymentIntentId: payment.stripePaymentIntentId,
-      stripeChargeId: payment.stripeChargeId || null,
-      refundedAmount: Number(payment.refundedAmount || 0),
-      refundReason: payment.refundReason || null,
-      metadata: payment.metadata || {},
-      createdAt: payment.createdAt.toISOString(),
-      updatedAt: payment.updatedAt.toISOString(),
-      paidAt: payment.paidAt?.toISOString() || null,
-      refundedAt: payment.refundedAt?.toISOString() || null,
+      amount: extraCharge.totalAmount / 100,
+      baseAmount: extraCharge.baseAmount / 100,
+      adminFeeAmount: extraCharge.adminFeeAmount / 100,
+      processingFeeAmount: extraCharge.processingFeeAmount / 100,
+      totalAmount: extraCharge.totalAmount / 100,
+      currency: 'GBP',
+      status: extraCharge.status === 'PAID' ? 'SUCCEEDED' : extraCharge.status,
+      paymentMethod: 'card',
+      stripePaymentIntentId: extraCharge.stripePaymentIntentId || null,
+      stripeChargeId: null,
+      refundedAmount: 0,
+      refundReason: null,
+      extraChargeReason: extraCharge.reason,
+      extraChargeDescription: extraCharge.description,
+      metadata: {
+        type: 'EXTRA_CHARGE',
+        reason: extraCharge.reason,
+        description: extraCharge.description,
+      },
+      createdAt: extraCharge.createdAt.toISOString(),
+      updatedAt: extraCharge.updatedAt.toISOString(),
+      paidAt: extraCharge.paidAt?.toISOString() || null,
+      refundedAt: null,
     };
   },
 
@@ -1563,49 +1834,92 @@ export const paymentService = {
     const dateFrom = query.dateFrom ? new Date(query.dateFrom + 'T00:00:00Z') : undefined;
     const dateTo = query.dateTo ? new Date(query.dateTo + 'T23:59:59Z') : undefined;
 
-    const where: any = {
+    const whereBookingPayment: any = {
       booking: {
-        companyId: companyId, // This will filter out bookings with null companyId (deleted companies)
+        companyId: companyId,
       },
     };
 
+    const whereExtraCharge: any = {
+      companyId,
+    };
+
     if (dateFrom || dateTo) {
-      where.createdAt = {};
+      whereBookingPayment.createdAt = {};
+      whereExtraCharge.paidAt = {};
       if (dateFrom) {
-        where.createdAt.gte = dateFrom;
+        whereBookingPayment.createdAt.gte = dateFrom;
+        whereExtraCharge.paidAt.gte = dateFrom;
       }
       if (dateTo) {
-        where.createdAt.lte = dateTo;
+        whereBookingPayment.createdAt.lte = dateTo;
+        whereExtraCharge.paidAt.lte = dateTo;
       }
     }
 
-    // Get all payments for stats
-    const payments = await prisma.payment.findMany({
-      where,
+    // Get all booking payments
+    const bookingPayments = await prisma.payment.findMany({
+      where: whereBookingPayment,
       include: {
         booking: true,
       },
     });
 
-    const totalAmount = payments.reduce((sum, p) => sum + Number(p.amount), 0);
-    const paidPayments = payments.filter((p) => p.status === 'SUCCEEDED');
-    const pendingPayments = payments.filter((p) => p.status === 'PENDING');
-    const refundedPayments = payments.filter((p) => p.status === 'REFUNDED' || p.status === 'PARTIALLY_REFUNDED');
+    // Get all extra charge payments (only paid ones for stats)
+    const extraCharges = await prisma.bookingExtraCharge.findMany({
+      where: {
+        ...whereExtraCharge,
+        status: 'PAID',
+      },
+    });
 
-    const paidAmount = paidPayments.reduce((sum, p) => sum + Number(p.amount), 0);
-    const pendingAmount = pendingPayments.reduce((sum, p) => sum + Number(p.amount), 0);
-    const refundedAmount = refundedPayments.reduce((sum, p) => sum + Number(p.refundedAmount || 0), 0);
+    // Calculate booking payment stats
+    const bookingTotalAmount = bookingPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+    const bookingPaidPayments = bookingPayments.filter((p) => p.status === 'SUCCEEDED');
+    const bookingPendingPayments = bookingPayments.filter((p) => p.status === 'PENDING');
+    const bookingRefundedPayments = bookingPayments.filter((p) => p.status === 'REFUNDED' || p.status === 'PARTIALLY_REFUNDED');
+
+    const bookingPaidAmount = bookingPaidPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+    const bookingPendingAmount = bookingPendingPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+    const bookingRefundedAmount = bookingRefundedPayments.reduce((sum, p) => sum + Number(p.refundedAmount || 0), 0);
+
+    // Calculate extra charge stats (all are paid since we filtered by status: 'PAID')
+    const extraChargeTotalAmount = extraCharges.reduce((sum, ec) => sum + ec.totalAmount / 100, 0);
+
+    // Combined stats
+    const totalAmount = bookingTotalAmount + extraChargeTotalAmount;
+    const paidAmount = bookingPaidAmount + extraChargeTotalAmount;
+    const pendingAmount = bookingPendingAmount;
+    const refundedAmount = bookingRefundedAmount; // Extra charges don't have refunds yet
+
+    const totalCount = bookingPayments.length + extraCharges.length;
+    const paidCount = bookingPaidPayments.length + extraCharges.length;
+    const pendingCount = bookingPendingPayments.length;
+    const refundedCount = bookingRefundedPayments.length;
 
     return {
       totalAmount,
       paidAmount,
       pendingAmount,
       refundedAmount,
-      totalCount: payments.length,
-      paidCount: paidPayments.length,
-      pendingCount: pendingPayments.length,
-      refundedCount: refundedPayments.length,
-      averageAmount: payments.length > 0 ? totalAmount / payments.length : 0,
+      totalCount,
+      paidCount,
+      pendingCount,
+      refundedCount,
+      averageAmount: totalCount > 0 ? totalAmount / totalCount : 0,
+      breakdown: {
+        bookingPayments: {
+          count: bookingPayments.length,
+          totalAmount: bookingTotalAmount,
+          paidAmount: bookingPaidAmount,
+          pendingAmount: bookingPendingAmount,
+          refundedAmount: bookingRefundedAmount,
+        },
+        extraCharges: {
+          count: extraCharges.length,
+          totalAmount: extraChargeTotalAmount,
+        },
+      },
       period: {
         dateFrom: query.dateFrom || null,
         dateTo: query.dateTo || null,
