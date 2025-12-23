@@ -108,11 +108,71 @@ export const bookingRepository = {
 
   async findByCustomer(
     customerId: string,
-    params: PaginationParams & { status?: BookingStatus }
+    params: PaginationParams & { status?: BookingStatus; search?: string }
   ): Promise<{ bookings: Booking[]; total: number }> {
     const where: any = { customerId };
     if (params.status) {
       where.status = params.status;
+    }
+
+    // Add search functionality
+    if (params.search) {
+      const searchUpper = params.search.toUpperCase();
+      const statusMatches: any[] = [];
+      
+      // Check if search matches any status (enum values don't support contains)
+      const validStatuses: BookingStatus[] = ['PENDING', 'ACCEPTED', 'REJECTED', 'CANCELLED', 'IN_TRANSIT', 'DELIVERED'];
+      validStatuses.forEach(status => {
+        if (status.includes(searchUpper)) {
+          statusMatches.push({ status });
+        }
+      });
+
+      where.OR = [
+        {
+          id: {
+            contains: params.search,
+            mode: 'insensitive',
+          },
+        },
+        {
+          companyName: {
+            contains: params.search,
+            mode: 'insensitive',
+          },
+        },
+        {
+          shipmentSlot: {
+            OR: [
+              {
+                originCity: {
+                  contains: params.search,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                originCountry: {
+                  contains: params.search,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                destinationCity: {
+                  contains: params.search,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                destinationCountry: {
+                  contains: params.search,
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          },
+        },
+        ...statusMatches,
+      ];
     }
 
     const [bookings, total] = await Promise.all([

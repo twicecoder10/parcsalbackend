@@ -327,10 +327,11 @@ export const bookingService = {
 
     const pagination = parsePagination(query);
     const status = query.status as any;
+    const search = query.search as string | undefined;
 
     const { bookings, total } = await bookingRepository.findByCustomer(
       req.user.id,
-      { ...pagination, status }
+      { ...pagination, status, search }
     );
 
     // Sanitize sensitive data for customer
