@@ -219,6 +219,12 @@ export const bookingRepository = {
     if (params.search) {
       where.OR = [
         {
+          id: {
+            contains: params.search,
+            mode: 'insensitive',
+          },
+        },
+        {
           customer: {
             fullName: {
               contains: params.search,
