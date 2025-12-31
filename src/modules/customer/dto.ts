@@ -33,8 +33,19 @@ export const changePasswordSchema = z.object({
 
 export const updateNotificationPreferencesSchema = z.object({
   body: z.object({
+    // Transactional notification preferences
     email: z.boolean().optional(),
     sms: z.boolean().optional(),
+    // Marketing consent preferences (nested structure)
+    marketing: z.object({
+      emailMarketingOptIn: z.boolean().optional(),
+      whatsappMarketingOptIn: z.boolean().optional(),
+      carrierMarketingOptIn: z.boolean().optional(),
+    }).optional(),
+    // Support flat structure for backward compatibility
+    emailMarketingOptIn: z.boolean().optional(),
+    whatsappMarketingOptIn: z.boolean().optional(),
+    carrierMarketingOptIn: z.boolean().optional(),
   }),
 });
 

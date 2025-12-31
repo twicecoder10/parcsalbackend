@@ -194,13 +194,39 @@ export const customerService = {
       throw new NotFoundError('User not found');
     }
 
+    // Get marketing consent
+    const { marketingService } = await import('../marketing/service');
+    const marketingConsent = await marketingService.getConsent(req.user.id);
+
     return {
+      // Transactional notifications
       email: user.notificationEmail,
       sms: user.notificationSMS,
+      // Marketing consent
+      marketing: {
+        emailMarketingOptIn: marketingConsent.emailMarketingOptIn,
+        whatsappMarketingOptIn: marketingConsent.whatsappMarketingOptIn,
+        carrierMarketingOptIn: marketingConsent.carrierMarketingOptIn,
+      },
     };
   },
 
-  async updateNotificationPreferences(req: AuthRequest, dto: { email?: boolean; sms?: boolean }) {
+  async updateNotificationPreferences(
+    req: AuthRequest,
+    dto: {
+      email?: boolean;
+      sms?: boolean;
+      marketing?: {
+        emailMarketingOptIn?: boolean;
+        whatsappMarketingOptIn?: boolean;
+        carrierMarketingOptIn?: boolean;
+      };
+      // Support flat structure for backward compatibility
+      emailMarketingOptIn?: boolean;
+      whatsappMarketingOptIn?: boolean;
+      carrierMarketingOptIn?: boolean;
+    }
+  ) {
     if (!req.user || req.user.role !== 'CUSTOMER') {
       throw new ForbiddenError('Only customers can update notification preferences');
     }
@@ -210,17 +236,64 @@ export const customerService = {
       throw new NotFoundError('User not found');
     }
 
+    // Update transactional notification preferences
     const updateData: UpdateCustomerProfileData = {};
     if (dto.email !== undefined) updateData.notificationEmail = dto.email;
     if (dto.sms !== undefined) updateData.notificationSMS = dto.sms;
 
     const updatedUser = await customerRepository.updateProfile(req.user.id, updateData);
 
+    // Update marketing consent preferences
+    // Support both nested (marketing.*) and flat structure
+    const { marketingService } = await import('../marketing/service');
+    const marketingConsentUpdate: {
+      emailMarketingOptIn?: boolean;
+      whatsappMarketingOptIn?: boolean;
+      carrierMarketingOptIn?: boolean;
+    } = {};
+    
+    // Check nested structure first, then flat structure
+    if (dto.marketing?.emailMarketingOptIn !== undefined) {
+      marketingConsentUpdate.emailMarketingOptIn = dto.marketing.emailMarketingOptIn;
+    } else if (dto.emailMarketingOptIn !== undefined) {
+      marketingConsentUpdate.emailMarketingOptIn = dto.emailMarketingOptIn;
+    }
+    
+    if (dto.marketing?.whatsappMarketingOptIn !== undefined) {
+      marketingConsentUpdate.whatsappMarketingOptIn = dto.marketing.whatsappMarketingOptIn;
+    } else if (dto.whatsappMarketingOptIn !== undefined) {
+      marketingConsentUpdate.whatsappMarketingOptIn = dto.whatsappMarketingOptIn;
+    }
+    
+    if (dto.marketing?.carrierMarketingOptIn !== undefined) {
+      marketingConsentUpdate.carrierMarketingOptIn = dto.marketing.carrierMarketingOptIn;
+    } else if (dto.carrierMarketingOptIn !== undefined) {
+      marketingConsentUpdate.carrierMarketingOptIn = dto.carrierMarketingOptIn;
+    }
+
+    let updatedMarketingConsent = null;
+    if (Object.keys(marketingConsentUpdate).length > 0) {
+      updatedMarketingConsent = await marketingService.updateConsent(
+        req.user.id,
+        marketingConsentUpdate
+      );
+    } else {
+      // Get current marketing consent if not updating
+      updatedMarketingConsent = await marketingService.getConsent(req.user.id);
+    }
+
     return {
       message: 'Notification preferences updated successfully',
       preferences: {
+        // Transactional notifications
         email: updatedUser.notificationEmail,
         sms: updatedUser.notificationSMS,
+        // Marketing consent
+        marketing: {
+          emailMarketingOptIn: updatedMarketingConsent.emailMarketingOptIn,
+          whatsappMarketingOptIn: updatedMarketingConsent.whatsappMarketingOptIn,
+          carrierMarketingOptIn: updatedMarketingConsent.carrierMarketingOptIn,
+        },
       },
     };
   },

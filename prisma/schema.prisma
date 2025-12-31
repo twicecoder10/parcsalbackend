@@ -127,6 +127,33 @@ enum ExtraChargeStatus {
   CANCELLED
 }
 
+enum CampaignSenderType {
+  ADMIN
+  COMPANY
+}
+
+enum CampaignChannel {
+  EMAIL
+  IN_APP
+  WHATSAPP
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+enum AudienceType {
+  COMPANY_PAST_CUSTOMERS
+  PLATFORM_CUSTOMERS_ONLY
+  PLATFORM_COMPANIES_ONLY
+  PLATFORM_ALL_USERS
+}
+
 model User {
   id                    String    @id @default(uuid())
   email                 String    @unique
@@ -164,6 +191,8 @@ model User {
   customerChatRooms ChatRoom[] @relation("CustomerChatRooms")
   sentMessages    Message[]
   createdExtraCharges BookingExtraCharge[] @relation("ExtraChargeCreator")
+  marketingConsent MarketingConsent?
+  marketingMessages MarketingMessageLog[]
 
   @@index([email])
   @@index([companyId])
@@ -571,6 +600,81 @@ model BookingExtraCharge {
 
   @@index([bookingId])
   @@index([companyId])
+  @@index([status])
+}
+
+model MarketingConsent {
+  id                     String  @id @default(cuid())
+  userId                 String  @unique
+
+  // General Parcsal marketing (admin broadcasts)
+  emailMarketingOptIn     Boolean @default(true)
+  whatsappMarketingOptIn  Boolean @default(true)
+
+  // Promotions from carriers/companies
+  carrierMarketingOptIn   Boolean @default(true)
+
+  updatedAt              DateTime @updatedAt
+  createdAt              DateTime @default(now())
+
+  user                   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model MarketingCampaign {
+  id                String            @id @default(cuid())
+  senderType        CampaignSenderType
+  senderCompanyId   String?
+  createdByUserId   String
+
+  audienceType      AudienceType
+  channel           CampaignChannel
+
+  subject           String?           // required for EMAIL
+  title             String?           // for IN_APP
+  contentHtml       String?           // for EMAIL
+  contentText       String?           // fallback text
+  inAppBody         String?           // for IN_APP
+  whatsappTemplateKey String?         // placeholder for future WhatsApp templates
+
+  status            CampaignStatus    @default(DRAFT)
+  scheduledAt       DateTime?
+  startedAt         DateTime?
+  sentAt            DateTime?
+  failureReason     String?
+
+  totalRecipients   Int               @default(0)
+  deliveredCount    Int               @default(0)
+  failedCount       Int               @default(0)
+
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  messages          MarketingMessageLog[]
+
+  @@index([senderType, senderCompanyId])
+  @@index([status, scheduledAt])
+  @@index([createdByUserId])
+}
+
+model MarketingMessageLog {
+  id                String         @id @default(cuid())
+  campaignId        String
+  recipientId       String
+  channel           CampaignChannel
+  status            String         // QUEUED | SENT | DELIVERED | FAILED | SKIPPED_OPT_OUT | SKIPPED_NOT_IMPLEMENTED
+  error             String?
+  providerMessageId String?
+
+  createdAt         DateTime       @default(now())
+  sentAt            DateTime?
+
+  campaign          MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  recipient         User              @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([recipientId])
   @@index([status])
 }
 

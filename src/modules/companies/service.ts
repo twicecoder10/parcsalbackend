@@ -1020,12 +1020,21 @@ export const companyService = {
       },
     });
 
+    // Get marketing consent
+    const { marketingService } = await import('../marketing/service');
+    const marketingConsent = await marketingService.getConsent(req.user.id);
+
     return {
       notifications: {
         email: user?.notificationEmail ?? true,
         sms: user?.notificationSMS ?? false,
         bookingUpdates: true, // Default to true, can be made configurable
         shipmentUpdates: true, // Default to true, can be made configurable
+      },
+      marketing: {
+        emailMarketingOptIn: marketingConsent.emailMarketingOptIn,
+        whatsappMarketingOptIn: marketingConsent.whatsappMarketingOptIn,
+        carrierMarketingOptIn: marketingConsent.carrierMarketingOptIn,
       },
     };
   },
@@ -1053,6 +1062,34 @@ export const companyService = {
       }
     }
 
+    // Update marketing consent preferences
+    const { marketingService } = await import('../marketing/service');
+    const marketingConsentUpdate: {
+      emailMarketingOptIn?: boolean;
+      whatsappMarketingOptIn?: boolean;
+      carrierMarketingOptIn?: boolean;
+    } = {};
+    
+    if (settings.marketing) {
+      if (settings.marketing.emailMarketingOptIn !== undefined)
+        marketingConsentUpdate.emailMarketingOptIn = settings.marketing.emailMarketingOptIn;
+      if (settings.marketing.whatsappMarketingOptIn !== undefined)
+        marketingConsentUpdate.whatsappMarketingOptIn = settings.marketing.whatsappMarketingOptIn;
+      if (settings.marketing.carrierMarketingOptIn !== undefined)
+        marketingConsentUpdate.carrierMarketingOptIn = settings.marketing.carrierMarketingOptIn;
+    }
+
+    let updatedMarketingConsent = null;
+    if (Object.keys(marketingConsentUpdate).length > 0) {
+      updatedMarketingConsent = await marketingService.updateConsent(
+        req.user.id,
+        marketingConsentUpdate
+      );
+    } else {
+      // Get current marketing consent if not updating
+      updatedMarketingConsent = await marketingService.getConsent(req.user.id);
+    }
+
     // Get updated user preferences
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
@@ -1068,6 +1105,11 @@ export const companyService = {
         sms: user?.notificationSMS ?? false,
         bookingUpdates: settings.notifications?.bookingUpdates ?? true,
         shipmentUpdates: settings.notifications?.shipmentUpdates ?? true,
+      },
+      marketing: {
+        emailMarketingOptIn: updatedMarketingConsent.emailMarketingOptIn,
+        whatsappMarketingOptIn: updatedMarketingConsent.whatsappMarketingOptIn,
+        carrierMarketingOptIn: updatedMarketingConsent.carrierMarketingOptIn,
       },
     };
   },

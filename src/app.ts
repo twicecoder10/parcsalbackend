@@ -24,6 +24,12 @@ import chatRoutes from './modules/chat/routes';
 import connectRoutes from './modules/connect/routes';
 import extraChargeRoutes from './modules/extra-charges/routes';
 import { paymentController } from './modules/payments/controller';
+import {
+  adminRouter as marketingAdminRoutes,
+  companyRouter as marketingCompanyRoutes,
+  consentRouter as marketingConsentRoutes,
+  publicRouter as marketingPublicRoutes,
+} from './modules/marketing/routes';
 
 const app: Express = express();
 
@@ -41,6 +47,10 @@ app.use('/subscriptions/webhooks/stripe-subscriptions', express.raw({ type: 'app
 
 // JSON parser for all routes except webhooks
 // Webhook routes already have raw body parser applied above
+// Increased limit to handle rich marketing payloads
+const jsonParser = express.json({ limit: '2mb' });
+const urlencodedParser = express.urlencoded({ extended: true, limit: '2mb' });
+
 app.use((req, res, next) => {
   // Skip JSON parsing for webhook routes (they use raw body)
   if (
@@ -50,10 +60,10 @@ app.use((req, res, next) => {
   ) {
     return next();
   }
-  express.json()(req, res, next);
+  jsonParser(req, res, next);
 });
 
-app.use(express.urlencoded({ extended: true }));
+app.use(urlencodedParser);
 
 // Request logging middleware (after body parsers, before routes)
 app.use(requestLogger);
@@ -92,6 +102,10 @@ app.use('/', reviewRoutes); // Reviews routes (includes /bookings/:bookingId/rev
 app.use('/chat', chatRoutes); // Chat routes
 app.use('/connect', connectRoutes); // Stripe Connect routes
 app.use('/', extraChargeRoutes); // Extra charges routes (includes /bookings/:bookingId/extra-charges)
+app.use('/admin/marketing', marketingAdminRoutes); // Admin marketing routes
+app.use('/companies/marketing', marketingCompanyRoutes); // Company marketing routes
+app.use('/me', marketingConsentRoutes); // User consent routes
+app.use('/marketing', marketingPublicRoutes); // Public marketing routes (unsubscribe)
 
 // Error handling middleware (must be last)
 app.use(errorHandler);

@@ -13,6 +13,19 @@ async function startServer() {
     await prisma.$connect();
     console.log('✅ Database connected');
 
+    // Initialize campaign scheduler (Redis-based)
+    try {
+      const { initializeScheduler } = await import('./modules/marketing/scheduler');
+      await initializeScheduler();
+    } catch (error: any) {
+      console.warn('⚠️  Failed to initialize campaign scheduler (Redis may not be available)');
+      if (error.message && !error.message.includes('ENOTFOUND')) {
+        console.warn('   Error:', error.message);
+      }
+      console.warn('⚠️  Scheduled campaigns will not be processed automatically');
+      console.warn('   To fix: Ensure Redis is running and REDIS_URL/REDIS_HOST is set correctly');
+    }
+
     // Create HTTP server
     const httpServer = createServer(app);
 
@@ -41,17 +54,30 @@ async function startServer() {
 }
 
 // Graceful shutdown
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, shutting down gracefully...');
-  await prisma.$disconnect();
-  process.exit(0);
-});
+async function gracefulShutdown() {
+  console.log('Shutting down gracefully...');
+  
+  try {
+    // Shutdown campaign scheduler
+    try {
+      const { shutdownScheduler } = await import('./modules/marketing/scheduler');
+      await shutdownScheduler();
+    } catch (error) {
+      console.error('Error shutting down scheduler:', error);
+    }
 
-process.on('SIGINT', async () => {
-  console.log('SIGINT received, shutting down gracefully...');
-  await prisma.$disconnect();
-  process.exit(0);
-});
+    // Disconnect database
+    await prisma.$disconnect();
+    console.log('✅ Shutdown complete');
+    process.exit(0);
+  } catch (error) {
+    console.error('Error during shutdown:', error);
+    process.exit(1);
+  }
+}
+
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
 
 startServer();
 
