@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { shipmentController } from './controller';
 import { authenticate, requireCompanyAccess, optionalAuthenticate } from '../../middleware/auth';
 import { validate } from '../../middleware/validator';
+import { searchLimiter } from '../../middleware/rateLimiter';
 import {
   createShipmentSchema,
   updateShipmentSchema,
@@ -15,7 +16,12 @@ import {
 const router = Router();
 
 // Public routes
-router.get('/search', validate(searchShipmentsSchema), shipmentController.searchShipments);
+router.get(
+  '/search',
+  searchLimiter,
+  validate(searchShipmentsSchema),
+  shipmentController.searchShipments
+);
 router.get('/track/:bookingId', validate(trackShipmentByBookingSchema), shipmentController.trackShipmentByBooking);
 // Optional auth - if authenticated company user, skip verification check
 router.get('/:id', optionalAuthenticate, validate(getShipmentSchema), shipmentController.getShipmentById);

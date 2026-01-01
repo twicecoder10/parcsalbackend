@@ -554,6 +554,11 @@ export const shipmentService = {
                 departureTime: true,
                 arrivalTime: true,
                 mode: true,
+                company: {
+                  select: {
+                    name: true,
+                  },
+                },
               },
             },
             company: {
@@ -565,27 +570,17 @@ export const shipmentService = {
         });
 
         // Send delivered email to each customer
+        const { queueBookingDeliveredEmail } = await import('../email/queue');
         await Promise.all(
           bookings.map(async (booking) => {
             if (booking.customer.notificationEmail) {
               try {
-                await emailService.sendBookingDeliveredEmail(
-                  booking.customer.email,
-                  booking.customer.fullName,
-                  booking.id,
-                  {
-                    originCity: booking.shipmentSlot.originCity,
-                    originCountry: booking.shipmentSlot.originCountry,
-                    destinationCity: booking.shipmentSlot.destinationCity,
-                    destinationCountry: booking.shipmentSlot.destinationCountry,
-                    departureTime: booking.shipmentSlot.departureTime,
-                    arrivalTime: booking.shipmentSlot.arrivalTime,
-                    mode: booking.shipmentSlot.mode,
-                    price: Number(booking.calculatedPrice),
-                    currency: 'gbp',
-                  },
-                  booking.company?.name || booking.companyName || 'Company'
-                );
+                await queueBookingDeliveredEmail({
+                  customerEmail: booking.customer.email,
+                  customerName: booking.customer.fullName,
+                  bookingId: booking.id,
+                  companyName: booking.shipmentSlot.company?.name || booking.company?.name || 'Company',
+                });
               } catch (err) {
                 console.error(`Failed to send delivered email for booking ${booking.id}:`, err);
               }

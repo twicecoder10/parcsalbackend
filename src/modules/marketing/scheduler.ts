@@ -1,63 +1,11 @@
 import { Queue, Worker, Job } from 'bullmq';
-import Redis from 'ioredis';
+import { redisClient } from '../../config/redis';
 import { marketingService } from './service';
 import { marketingRepository } from './repository';
 
-// Redis connection configuration
-// Supports REDIS_URL, REDIS_PUBLIC_URL (Railway), or individual REDIS_HOST/PORT/PASSWORD
-function getRedisConnection() {
-  // Check for REDIS_URL or REDIS_PUBLIC_URL (Railway uses REDIS_PUBLIC_URL)
-  const redisUrl = process.env.REDIS_URL || process.env.REDIS_PUBLIC_URL;
-  
-  // If a Redis URL is provided, use it directly (ioredis supports connection strings)
-  if (redisUrl) {
-    // Replace template variables if present (Railway template syntax)
-    const resolvedUrl = redisUrl
-      .replace(/\$\{\{REDIS_PASSWORD\}\}/g, process.env.REDIS_PASSWORD || '')
-      .replace(/\$\{\{RAILWAY_TCP_PROXY_DOMAIN\}\}/g, process.env.RAILWAY_TCP_PROXY_DOMAIN || '')
-      .replace(/\$\{\{RAILWAY_TCP_PROXY_PORT\}\}/g, process.env.RAILWAY_TCP_PROXY_PORT || '6379');
-    
-    return new Redis(resolvedUrl, {
-      maxRetriesPerRequest: null, // Required for BullMQ
-      retryStrategy: (times: number) => {
-        const delay = Math.min(times * 50, 2000);
-        return delay;
-      },
-      reconnectOnError: (err: Error) => {
-        const targetError = 'READONLY';
-        if (err.message.includes(targetError)) {
-          return true; // Reconnect on READONLY error
-        }
-        return false;
-      },
-    });
-  }
-
-  // Otherwise, use individual environment variables
-  return new Redis({
-    host: process.env.REDIS_HOST || 'localhost',
-    port: parseInt(process.env.REDIS_PORT || '6379'),
-    password: process.env.REDIS_PASSWORD,
-    maxRetriesPerRequest: null, // Required for BullMQ
-    retryStrategy: (times: number) => {
-      const delay = Math.min(times * 50, 2000);
-      return delay;
-    },
-    reconnectOnError: (err: Error) => {
-      const targetError = 'READONLY';
-      if (err.message.includes(targetError)) {
-        return true; // Reconnect on READONLY error
-      }
-      return false;
-    },
-  });
-}
-
-const redisConnection = getRedisConnection();
-
 // Campaign queue
 export const campaignQueue = new Queue('marketing-campaigns', {
-  connection: redisConnection,
+  connection: redisClient,
   defaultJobOptions: {
     attempts: 3,
     backoff: {
@@ -114,18 +62,25 @@ export const campaignWorker = new Worker(
     }
   },
   {
-    connection: redisConnection,
+    connection: redisClient,
     concurrency: 5, // Process up to 5 campaigns concurrently
   }
 );
 
+// Track shutdown state to suppress expected errors
+let isShuttingDown = false;
+
 // Event handlers
 campaignWorker.on('completed', (job: Job) => {
-  console.log(`✅ Campaign job ${job.id} completed`);
+  if (!isShuttingDown) {
+    console.log(`✅ Campaign job ${job.id} completed`);
+  }
 });
 
 campaignWorker.on('failed', (job: Job | undefined, err: Error) => {
-  console.error(`❌ Campaign job ${job?.id} failed:`, err.message);
+  if (!isShuttingDown) {
+    console.error(`❌ Campaign job ${job?.id} failed:`, err.message);
+  }
 });
 
 // Suppress repeated connection errors - log once per minute max
@@ -133,6 +88,11 @@ let lastConnectionErrorTime = 0;
 const CONNECTION_ERROR_THROTTLE_MS = 60000; // 1 minute
 
 campaignWorker.on('error', (err: Error) => {
+  // Suppress "Connection is closed" errors during shutdown (expected behavior)
+  if (isShuttingDown && (err.message.includes('Connection is closed') || err.message.includes('closed'))) {
+    return;
+  }
+
   const now = Date.now();
   // Only log connection errors once per minute to avoid spam
   if (err.message.includes('ENOTFOUND') || err.message.includes('ECONNREFUSED')) {
@@ -141,20 +101,13 @@ campaignWorker.on('error', (err: Error) => {
       console.error('   Make sure Redis is running and REDIS_URL/REDIS_HOST is correct');
       lastConnectionErrorTime = now;
     }
-  } else {
-    // Log other errors immediately
+  } else if (!err.message.includes('Connection is closed') && !err.message.includes('closed')) {
+    // Log other errors immediately (but not connection closed errors)
     console.error('❌ Campaign worker error:', err);
   }
 });
 
-// Handle Redis connection errors
-redisConnection.on('error', (err: Error) => {
-  const now = Date.now();
-  if (now - lastConnectionErrorTime > CONNECTION_ERROR_THROTTLE_MS) {
-    console.error('❌ Redis connection error:', err.message);
-    lastConnectionErrorTime = now;
-  }
-});
+// Note: Redis connection errors are handled in src/config/redis.ts
 
 /**
  * Schedule a campaign in Redis queue
@@ -236,9 +189,20 @@ export async function initializeScheduler() {
  */
 export async function shutdownScheduler() {
   console.log('🛑 Shutting down campaign scheduler...');
-  await campaignWorker.close();
-  await campaignQueue.close();
-  await redisConnection.quit();
-  console.log('✅ Campaign scheduler shut down');
+  isShuttingDown = true;
+  
+  try {
+    // Close worker first (stops processing new jobs)
+    await campaignWorker.close();
+    // Then close queue
+    await campaignQueue.close();
+    // Note: redisClient is shared, don't quit it here
+    console.log('✅ Campaign scheduler shut down');
+  } catch (error: any) {
+    // Suppress connection errors during shutdown
+    if (!error.message?.includes('Connection is closed') && !error.message?.includes('closed')) {
+      console.error('Error shutting down campaign scheduler:', error);
+    }
+  }
 }
 

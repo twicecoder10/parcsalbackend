@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { bookingController } from './controller';
 import { authenticate, requireCompanyAccess, requireRole } from '../../middleware/auth';
 import { validate } from '../../middleware/validator';
+import { bookingLimiter } from '../../middleware/rateLimiter';
 import {
   createBookingSchema,
   updateBookingStatusSchema,
@@ -18,6 +19,7 @@ router.post(
   '/',
   authenticate,
   requireRole('CUSTOMER'),
+  bookingLimiter,
   validate(createBookingSchema),
   bookingController.createBooking
 );

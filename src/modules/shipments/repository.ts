@@ -206,6 +206,7 @@ export const shipmentRepository = {
     filters: SearchFilters,
     params: PaginationParams
   ): Promise<{ shipments: ShipmentSlot[]; total: number }> {
+    const now = new Date();
     const where: any = {
       status: 'PUBLISHED', // Only show published shipments
       company: {
@@ -241,39 +242,55 @@ export const shipmentRepository = {
       where.mode = filters.mode;
     }
 
-    // Handle date filtering with OR logic for departure/arrival
+    // Always exclude past shipments - only show shipments with departureTime in the future
+    // This ensures users only see available/upcoming shipments
     const hasDepartureFilter = filters.departureFrom || filters.departureTo;
     const hasArrivalFilter = filters.arrivalFrom || filters.arrivalTo;
     
+    // Always require departureTime >= now to exclude past shipments
+    const departureTimeCondition: any = {
+      gte: now, // Base requirement: departure must be in the future
+    };
+    
+    // Apply additional date filters if provided
+    if (hasDepartureFilter) {
+      if (filters.departureFrom && filters.departureFrom > now) {
+        departureTimeCondition.gte = filters.departureFrom; // Use provided date if it's later than now
+      }
+      if (filters.departureTo) {
+        departureTimeCondition.lte = filters.departureTo;
+      }
+    }
+    
+    // Handle date filtering with OR logic for departure/arrival
     if (hasDepartureFilter && hasArrivalFilter) {
       // OR condition: departure between dates OR arrival between dates
-      const departureCondition: any = {};
-      if (filters.departureFrom) departureCondition.gte = filters.departureFrom;
-      if (filters.departureTo) departureCondition.lte = filters.departureTo;
-      
+      // But departure must still be >= now (we can't show past shipments)
       const arrivalCondition: any = {};
-      if (filters.arrivalFrom) arrivalCondition.gte = filters.arrivalFrom;
-      if (filters.arrivalTo) arrivalCondition.lte = filters.arrivalTo;
+      if (filters.arrivalFrom) {
+        arrivalCondition.gte = filters.arrivalFrom;
+      }
+      if (filters.arrivalTo) {
+        arrivalCondition.lte = filters.arrivalTo;
+      }
       
       where.OR = [
         {
-          departureTime: departureCondition,
+          departureTime: departureTimeCondition,
         },
         {
-          arrivalTime: arrivalCondition,
+          AND: [
+            { departureTime: { gte: now } }, // Still require departure >= now
+            { arrivalTime: arrivalCondition },
+          ],
         },
       ];
     } else if (hasDepartureFilter) {
       // Only departure filter
-      where.departureTime = {};
-      if (filters.departureFrom) {
-        where.departureTime.gte = filters.departureFrom;
-      }
-      if (filters.departureTo) {
-        where.departureTime.lte = filters.departureTo;
-      }
+      where.departureTime = departureTimeCondition;
     } else if (hasArrivalFilter) {
-      // Only arrival filter
+      // Only arrival filter - still ensure departure is not in the past
+      where.departureTime = { gte: now };
       where.arrivalTime = {};
       if (filters.arrivalFrom) {
         where.arrivalTime.gte = filters.arrivalFrom;
@@ -281,12 +298,15 @@ export const shipmentRepository = {
       if (filters.arrivalTo) {
         where.arrivalTime.lte = filters.arrivalTo;
       }
+    } else {
+      // No date filters - just exclude past shipments
+      where.departureTime = departureTimeCondition;
     }
 
-    const shipments = await prisma.shipmentSlot.findMany({
+    // Get all matching shipments (before price filtering) to calculate total
+    // We need to fetch all to apply price filtering, then paginate
+    const allShipments = await prisma.shipmentSlot.findMany({
       where,
-      skip: params.offset,
-      take: params.limit,
       orderBy: {
         departureTime: 'asc',
       },
@@ -304,9 +324,9 @@ export const shipmentRepository = {
     });
 
     // Filter by price range in memory (could be optimized with raw SQL)
-    let filteredShipments = shipments;
+    let filteredShipments = allShipments;
     if (filters.minPrice !== undefined || filters.maxPrice !== undefined) {
-      filteredShipments = shipments.filter((shipment) => {
+      filteredShipments = allShipments.filter((shipment) => {
         let price: number | null = null;
 
         if (shipment.pricingModel === 'FLAT' && shipment.flatPrice) {
@@ -330,7 +350,16 @@ export const shipmentRepository = {
       });
     }
 
-    return { shipments: filteredShipments, total: filteredShipments.length };
+    // Calculate total before pagination
+    const total = filteredShipments.length;
+
+    // Apply pagination after filtering
+    const paginatedShipments = filteredShipments.slice(
+      params.offset,
+      params.offset + params.limit
+    );
+
+    return { shipments: paginatedShipments, total };
   },
 
   async countActiveByCompany(companyId: string): Promise<number> {

@@ -3,6 +3,11 @@ import { authController } from './controller';
 import { validate } from '../../middleware/validator';
 import { authenticate } from '../../middleware/auth';
 import {
+  authLimiter,
+  registrationLimiter,
+  refreshTokenLimiter,
+} from '../../middleware/rateLimiter';
+import {
   registerCustomerSchema,
   registerCompanyAdminSchema,
   loginSchema,
@@ -19,22 +24,30 @@ const router = Router();
 // Registration routes
 router.post(
   '/register/customer',
+  registrationLimiter,
   validate(registerCustomerSchema),
   authController.registerCustomer
 );
 
 router.post(
   '/register/company',
+  registrationLimiter,
   validate(registerCompanyAdminSchema),
   authController.registerCompanyAdmin
 );
 
 // Login
-router.post('/login', validate(loginSchema), authController.login);
+router.post(
+  '/login',
+  authLimiter,
+  validate(loginSchema),
+  authController.login
+);
 
 // Token management
 router.post(
   '/refresh-token',
+  refreshTokenLimiter,
   validate(refreshTokenSchema),
   authController.refreshToken
 );

@@ -7,7 +7,12 @@ import prisma from '../../config/database';
 import { Decimal } from '@prisma/client/runtime/library';
 import { onboardingRepository } from '../onboarding/repository';
 import { createNotification, createCompanyNotification } from '../../utils/notifications';
-import { emailService } from '../../config/email';
+import {
+  queueBookingConfirmationEmail,
+  queueBookingCancelledEmail,
+  queueBookingDeliveredEmail,
+  queueBookingRejectionEmail,
+} from '../email/queue';
 import Stripe from 'stripe';
 import { config } from '../../config/env';
 import { checkStaffPermission } from '../../utils/permissions';
@@ -489,6 +494,11 @@ export const bookingService = {
                 departureTime: true,
                 arrivalTime: true,
                 mode: true,
+                company: {
+                  select: {
+                    name: true,
+                  },
+                },
               },
             },
             company: {
@@ -502,26 +512,17 @@ export const bookingService = {
         });
 
         if (bookingForEmail && bookingForEmail.customer.notificationEmail) {
-          await emailService.sendBookingConfirmationEmail(
-            bookingForEmail.customer.email,
-            bookingForEmail.customer.fullName,
-            booking.id,
-            {
-              originCity: bookingForEmail.shipmentSlot.originCity,
-              originCountry: bookingForEmail.shipmentSlot.originCountry,
-              destinationCity: bookingForEmail.shipmentSlot.destinationCity,
-              destinationCountry: bookingForEmail.shipmentSlot.destinationCountry,
-              departureTime: bookingForEmail.shipmentSlot.departureTime,
-              arrivalTime: bookingForEmail.shipmentSlot.arrivalTime,
-              mode: bookingForEmail.shipmentSlot.mode,
-              price: Number(bookingForEmail.calculatedPrice),
-              currency: 'gbp',
-            },
-            bookingForEmail.company?.name || bookingForEmail.companyName || 'Company',
-            bookingForEmail.company?.contactEmail || undefined,
-            bookingForEmail.company?.contactPhone || undefined
-          ).catch((err) => {
-            console.error('Failed to send booking confirmation email:', err);
+          await queueBookingConfirmationEmail({
+            customerEmail: bookingForEmail.customer.email,
+            customerName: bookingForEmail.customer.fullName,
+            bookingId: booking.id,
+            companyName: bookingForEmail.shipmentSlot.company?.name || bookingForEmail.company?.name || 'Company',
+            originCity: bookingForEmail.shipmentSlot.originCity,
+            destinationCity: bookingForEmail.shipmentSlot.destinationCity,
+            departureTime: bookingForEmail.shipmentSlot.departureTime,
+            price: Number(bookingForEmail.calculatedPrice),
+          }).catch((err) => {
+            console.error('Failed to queue booking confirmation email:', err);
           });
         }
       }
@@ -548,6 +549,11 @@ export const bookingService = {
                 departureTime: true,
                 arrivalTime: true,
                 mode: true,
+                company: {
+                  select: {
+                    name: true,
+                  },
+                },
               },
             },
             company: {
@@ -559,24 +565,13 @@ export const bookingService = {
         });
 
         if (bookingForEmail && bookingForEmail.customer.notificationEmail) {
-          await emailService.sendBookingCancelledEmail(
-            bookingForEmail.customer.email,
-            bookingForEmail.customer.fullName,
-            booking.id,
-            {
-              originCity: bookingForEmail.shipmentSlot.originCity,
-              originCountry: bookingForEmail.shipmentSlot.originCountry,
-              destinationCity: bookingForEmail.shipmentSlot.destinationCity,
-              destinationCountry: bookingForEmail.shipmentSlot.destinationCountry,
-              departureTime: bookingForEmail.shipmentSlot.departureTime,
-              arrivalTime: bookingForEmail.shipmentSlot.arrivalTime,
-              mode: bookingForEmail.shipmentSlot.mode,
-              price: Number(bookingForEmail.calculatedPrice),
-              currency: 'gbp',
-            },
-            bookingForEmail.company?.name || bookingForEmail.companyName || 'Company'
-          ).catch((err) => {
-            console.error('Failed to send booking cancelled email:', err);
+          await queueBookingCancelledEmail({
+            customerEmail: bookingForEmail.customer.email,
+            customerName: bookingForEmail.customer.fullName,
+            bookingId: booking.id,
+            companyName: bookingForEmail.shipmentSlot.company.name,
+          }).catch((err) => {
+            console.error('Failed to queue booking cancelled email:', err);
           });
         }
       }
@@ -603,6 +598,11 @@ export const bookingService = {
                 departureTime: true,
                 arrivalTime: true,
                 mode: true,
+                company: {
+                  select: {
+                    name: true,
+                  },
+                },
               },
             },
             company: {
@@ -614,24 +614,13 @@ export const bookingService = {
         });
 
         if (bookingForEmail && bookingForEmail.customer.notificationEmail) {
-          await emailService.sendBookingDeliveredEmail(
-            bookingForEmail.customer.email,
-            bookingForEmail.customer.fullName,
-            booking.id,
-            {
-              originCity: bookingForEmail.shipmentSlot.originCity,
-              originCountry: bookingForEmail.shipmentSlot.originCountry,
-              destinationCity: bookingForEmail.shipmentSlot.destinationCity,
-              destinationCountry: bookingForEmail.shipmentSlot.destinationCountry,
-              departureTime: bookingForEmail.shipmentSlot.departureTime,
-              arrivalTime: bookingForEmail.shipmentSlot.arrivalTime,
-              mode: bookingForEmail.shipmentSlot.mode,
-              price: Number(bookingForEmail.calculatedPrice),
-              currency: 'gbp',
-            },
-            bookingForEmail.company?.name || bookingForEmail.companyName || 'Company'
-          ).catch((err) => {
-            console.error('Failed to send booking delivered email:', err);
+          await queueBookingDeliveredEmail({
+            customerEmail: bookingForEmail.customer.email,
+            customerName: bookingForEmail.customer.fullName,
+            bookingId: booking.id,
+            companyName: bookingForEmail.shipmentSlot.company.name,
+          }).catch((err) => {
+            console.error('Failed to queue booking delivered email:', err);
           });
         }
       }
@@ -856,6 +845,11 @@ export const bookingService = {
         departureTime: true,
         arrivalTime: true,
         mode: true,
+        company: {
+          select: {
+            name: true,
+          },
+        },
       },
     });
 
@@ -882,26 +876,17 @@ export const bookingService = {
 
     // Send booking confirmation email
     if (bookingForEmail && bookingForEmail.customer.notificationEmail && shipmentSlot) {
-      await emailService.sendBookingConfirmationEmail(
-        bookingForEmail.customer.email,
-        bookingForEmail.customer.fullName,
-        booking.id,
-        {
-          originCity: shipmentSlot.originCity,
-          originCountry: shipmentSlot.originCountry,
-          destinationCity: shipmentSlot.destinationCity,
-          destinationCountry: shipmentSlot.destinationCountry,
-          departureTime: shipmentSlot.departureTime,
-          arrivalTime: shipmentSlot.arrivalTime,
-          mode: shipmentSlot.mode,
-          price: Number(booking.calculatedPrice),
-          currency: 'gbp',
-        },
-        bookingForEmail.company?.name || bookingForEmail.companyName || 'Company',
-        bookingForEmail.company?.contactEmail || undefined,
-        bookingForEmail.company?.contactPhone || undefined
-      ).catch((err) => {
-        console.error('Failed to send booking confirmation email:', err);
+      await queueBookingConfirmationEmail({
+        customerEmail: bookingForEmail.customer.email,
+        customerName: bookingForEmail.customer.fullName,
+        bookingId: booking.id,
+        companyName: shipmentSlot.company.name,
+        originCity: shipmentSlot.originCity,
+        destinationCity: shipmentSlot.destinationCity,
+        departureTime: shipmentSlot.departureTime,
+        price: Number(bookingForEmail.calculatedPrice),
+      }).catch((err) => {
+        console.error('Failed to queue booking confirmation email:', err);
       });
     }
 
@@ -975,6 +960,17 @@ export const bookingService = {
     // Get shipment slot to check capacity
     const shipmentSlot = await prisma.shipmentSlot.findUnique({
       where: { id: booking.shipmentSlotId },
+      select: {
+        remainingCapacityKg: true,
+        remainingCapacityItems: true,
+        originCity: true,
+        destinationCity: true,
+        company: {
+          select: {
+            name: true,
+          },
+        },
+      },
     });
 
     if (!shipmentSlot) {
@@ -1070,26 +1066,13 @@ export const bookingService = {
 
     // Send rejection email if customer has email notifications enabled
     if (customer && customer.notificationEmail && shipmentSlot) {
-      await emailService.sendBookingRejectionEmail(
-        customer.email,
-        customer.fullName,
-        booking.id,
-        {
-          originCity: shipmentSlot.originCity,
-          originCountry: shipmentSlot.originCountry,
-          destinationCity: shipmentSlot.destinationCity,
-          destinationCountry: shipmentSlot.destinationCountry,
-          departureTime: shipmentSlot.departureTime,
-          arrivalTime: shipmentSlot.arrivalTime,
-          mode: shipmentSlot.mode,
-          price: Number(booking.calculatedPrice),
-          currency: 'gbp',
-        },
-        updatedBooking.shipmentSlot.company.name,
-        reason,
-        refundProcessed
-      ).catch((err) => {
-        console.error('Failed to send booking rejection email:', err);
+      await queueBookingRejectionEmail({
+        customerEmail: customer.email,
+        customerName: customer.fullName,
+        bookingId: booking.id,
+        companyName: shipmentSlot.company.name,
+      }).catch((err) => {
+        console.error('Failed to queue booking rejection email:', err);
       });
     }
 

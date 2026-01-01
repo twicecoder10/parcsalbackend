@@ -19,6 +19,28 @@ export const config = {
     webhookSubscriptionSecret: process.env.STRIPE_WEBHOOK_SUBSCRIPTION_SECRET || '',
   },
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
+  // Get allowed origins for CORS (supports comma-separated list or single URL)
+  getAllowedOrigins: (): string[] => {
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    
+    // If ALLOWED_ORIGINS is set, use it (comma-separated)
+    if (process.env.ALLOWED_ORIGINS) {
+      return process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim());
+    }
+    
+    // In development, allow multiple origins for mobile development
+    if (process.env.NODE_ENV !== 'production') {
+      const origins = [frontendUrl];
+      
+      // Add common Expo/local network origins
+      // Allow any origin with the same port (for local IP access like http://192.168.x.x:3000)
+      // This will be handled by the CORS function in app.ts
+      return origins;
+    }
+    
+    // In production, only allow the configured frontend URL
+    return [frontendUrl];
+  },
   smtp: {
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
     port: parseInt(process.env.SMTP_PORT || '587', 10),

@@ -6,8 +6,6 @@ import { parsePagination, createPaginatedResponse } from '../../utils/pagination
 import { onboardingRepository } from '../onboarding/repository';
 import prisma from '../../config/database';
 import { invitationRepository } from './invitation-repository';
-import { emailService } from '../../config/email';
-import { config } from '../../config/env';
 import { deleteImageByUrl } from '../../utils/upload';
 import { createNotification, createCompanyNotification } from '../../utils/notifications';
 import { reviewRepository } from '../reviews/repository';
@@ -834,19 +832,24 @@ export const companyService = {
       expiresAt,
     });
 
+    // Get inviter's full name
+    const inviter = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { fullName: true },
+    });
+
     // Send invitation email
-    const invitationUrl = `${config.frontendUrl}/auth/accept-invitation?token=${invitation.token}`;
     const companyName = company?.name || 'the company';
 
-    await emailService.sendTeamInvitationEmail(
-      email,
-      invitation.token,
+    const { queueTeamInvitationEmail } = await import('../email/queue');
+    await queueTeamInvitationEmail({
+      inviteeEmail: email,
+      inviterName: inviter?.fullName || req.user.email.split('@')[0],
       companyName,
-      role,
-      invitationUrl
-    ).catch((err) => {
+      invitationToken: invitation.token,
+    }).catch((err) => {
       // Log error but don't fail the invitation creation
-      console.error('Failed to send invitation email:', err);
+      console.error('Failed to queue invitation email:', err);
     });
 
     // Create notification if user already exists

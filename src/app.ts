@@ -3,6 +3,7 @@ import cors from 'cors';
 import { config } from './config/env';
 import { errorHandler } from './middleware/errorHandler';
 import { requestLogger } from './middleware/requestLogger';
+import { generalLimiter } from './middleware/rateLimiter';
 
 // Import routes
 import authRoutes from './modules/auth/routes';
@@ -35,7 +36,38 @@ const app: Express = express();
 
 // Middleware
 app.use(cors({
-  origin: config.frontendUrl,
+  origin: (origin, callback) => {
+    const allowedOrigins = config.getAllowedOrigins();
+    
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    // Check if origin is in allowed list
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    // In development, allow any local network IP with the same port
+    if (config.nodeEnv !== 'production') {
+      const port = config.port.toString();
+      const localPatterns = [
+        new RegExp(`^http://localhost:${port}$`),
+        new RegExp(`^http://127\\.0\\.0\\.1:${port}$`),
+        new RegExp(`^http://192\\.168\\.\\d+\\.\\d+:${port}$`),
+        new RegExp(`^http://10\\.\\d+\\.\\d+\\.\\d+:${port}$`),
+        new RegExp(`^http://172\\.(1[6-9]|2[0-9]|3[0-1])\\.\\d+\\.\\d+:${port}$`),
+        /^exp:\/\/.*$/, // Expo app origins
+      ];
+      
+      if (localPatterns.some(pattern => pattern.test(origin))) {
+        return callback(null, true);
+      }
+    }
+    
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
 }));
 
@@ -67,6 +99,19 @@ app.use(urlencodedParser);
 
 // Request logging middleware (after body parsers, before routes)
 app.use(requestLogger);
+
+// Apply general rate limiting to all routes (except webhooks)
+app.use((req, res, next) => {
+  // Skip rate limiting for webhook routes (they have their own validation)
+  if (
+    req.path === '/payments/webhooks/stripe' ||
+    req.path === '/webhook/stripe' ||
+    req.path === '/subscriptions/webhooks/stripe-subscriptions'
+  ) {
+    return next();
+  }
+  generalLimiter(req, res, next);
+});
 
 // Health check
 app.get('/health', (_req, res) => {
