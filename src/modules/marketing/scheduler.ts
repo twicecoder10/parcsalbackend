@@ -37,25 +37,20 @@ export const campaignWorker = new Worker(
       }
 
       if (campaign.status !== 'SCHEDULED') {
-        console.log(`Campaign ${campaignId} is no longer SCHEDULED (status: ${campaign.status}), skipping`);
         return;
       }
 
       if (campaign.scheduledAt && campaign.scheduledAt > new Date()) {
-        console.log(`Campaign ${campaignId} scheduled time hasn't arrived yet, skipping`);
         return;
       }
 
       // Send the campaign
-      console.log(`Processing scheduled campaign ${campaignId}`);
       await marketingService.sendCampaignNow(
         campaignId,
         campaign.createdByUserId,
         campaign.senderType === 'ADMIN' ? 'SUPER_ADMIN' : 'COMPANY_ADMIN',
         campaign.senderCompanyId || undefined
       );
-
-      console.log(`Successfully sent scheduled campaign ${campaignId}`);
     } catch (error: any) {
       console.error(`Error processing scheduled campaign ${campaignId}:`, error);
       throw error; // Re-throw to trigger retry mechanism
@@ -71,10 +66,8 @@ export const campaignWorker = new Worker(
 let isShuttingDown = false;
 
 // Event handlers
-campaignWorker.on('completed', (job: Job) => {
-  if (!isShuttingDown) {
-    console.log(`✅ Campaign job ${job.id} completed`);
-  }
+campaignWorker.on('completed', () => {
+  // Job completed silently
 });
 
 campaignWorker.on('failed', (job: Job | undefined, err: Error) => {
@@ -143,7 +136,6 @@ export async function scheduleCampaignInQueue(campaignId: string, scheduledAt: D
     );
   }
 
-  console.log(`Campaign ${campaignId} scheduled in Redis queue for ${scheduledDate.toISOString()}`);
 }
 
 /**
@@ -153,7 +145,6 @@ export async function removeCampaignFromQueue(campaignId: string) {
   const job = await campaignQueue.getJob(`campaign-${campaignId}`);
   if (job) {
     await job.remove();
-    console.log(`Campaign ${campaignId} removed from Redis queue`);
   }
 }
 
@@ -163,12 +154,8 @@ export async function removeCampaignFromQueue(campaignId: string) {
  */
 export async function initializeScheduler() {
   try {
-    console.log('🔄 Initializing campaign scheduler...');
-
     // Find all scheduled campaigns
     const scheduledCampaigns = await marketingRepository.findScheduledCampaigns();
-
-    console.log(`Found ${scheduledCampaigns.length} scheduled campaigns in database`);
 
     // Add each to Redis queue
     for (const campaign of scheduledCampaigns) {
@@ -176,8 +163,6 @@ export async function initializeScheduler() {
         await scheduleCampaignInQueue(campaign.id, campaign.scheduledAt);
       }
     }
-
-    console.log('✅ Campaign scheduler initialized');
   } catch (error) {
     console.error('❌ Failed to initialize campaign scheduler:', error);
     throw error;
@@ -188,7 +173,6 @@ export async function initializeScheduler() {
  * Graceful shutdown
  */
 export async function shutdownScheduler() {
-  console.log('🛑 Shutting down campaign scheduler...');
   isShuttingDown = true;
   
   try {
@@ -197,7 +181,6 @@ export async function shutdownScheduler() {
     // Then close queue
     await campaignQueue.close();
     // Note: redisClient is shared, don't quit it here
-    console.log('✅ Campaign scheduler shut down');
   } catch (error: any) {
     // Suppress connection errors during shutdown
     if (!error.message?.includes('Connection is closed') && !error.message?.includes('closed')) {

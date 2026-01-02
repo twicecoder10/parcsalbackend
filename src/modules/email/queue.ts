@@ -197,7 +197,6 @@ export const emailWorker = new Worker(
           throw new Error(`Unknown email job type: ${jobName}`);
       }
 
-      console.log(`✅ Email job ${job.id} (${jobName}) completed`);
     } catch (error: any) {
       console.error(`❌ Email job ${job.id} failed:`, error.message);
       throw error; // Re-throw to trigger retry mechanism
@@ -210,8 +209,8 @@ export const emailWorker = new Worker(
 );
 
 // Event handlers
-emailWorker.on('completed', (job: Job) => {
-  console.log(`✅ Email job ${job.id} completed`);
+emailWorker.on('completed', () => {
+  // Job completed silently
 });
 
 emailWorker.on('failed', (job: Job | undefined, err: Error) => {
@@ -291,7 +290,6 @@ export async function queueTeamInvitationEmail(data: SendTeamInvitationEmailJobD
  * Graceful shutdown
  */
 export async function shutdownEmailQueue() {
-  console.log('🛑 Shutting down email queue...');
   isShuttingDown = true;
   
   try {
@@ -299,7 +297,6 @@ export async function shutdownEmailQueue() {
     await emailWorker.close();
     // Then close queue
     await emailQueue.close();
-    console.log('✅ Email queue shut down');
   } catch (error: any) {
     // Suppress connection errors during shutdown
     if (!error.message?.includes('Connection is closed') && !error.message?.includes('closed')) {

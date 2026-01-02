@@ -304,8 +304,6 @@ export const subscriptionService = {
               
               // Update the subscription's planId
               await subscriptionRepository.updatePlan(dbSubscription.id, detectedPlanId);
-              
-              console.log(`[Subscription Webhook] Plan changed for subscription ${subscription.id}: ${dbSubscription.companyPlanId} -> ${detectedPlanId}`);
             }
           }
         }
