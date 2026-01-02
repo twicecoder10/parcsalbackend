@@ -1932,6 +1932,158 @@ export const paymentService = {
       throw new ForbiddenError('User must be associated with a company');
     }
 
+    // Check if this is an extra charge ID (starts with ECH-)
+    const isExtraCharge = paymentId.startsWith('ECH-');
+
+    if (isExtraCharge) {
+      // Handle extra charge refund
+      const extraCharge = await prisma.bookingExtraCharge.findUnique({
+        where: { id: paymentId },
+        include: {
+          booking: {
+            include: {
+              shipmentSlot: {
+                select: {
+                  originCity: true,
+                  destinationCity: true,
+                },
+              },
+              customer: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  email: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!extraCharge) {
+        throw new NotFoundError('Extra charge not found');
+      }
+
+      // Verify the extra charge belongs to the company
+      if (extraCharge.companyId !== req.user.companyId) {
+        throw new ForbiddenError('You do not have permission to refund this extra charge');
+      }
+
+      // Check if refund is allowed (must be PAID)
+      if (extraCharge.status !== 'PAID') {
+        throw new BadRequestError('Only paid extra charges can be refunded');
+      }
+
+      if (!extraCharge.stripePaymentIntentId) {
+        throw new BadRequestError('Extra charge does not have a payment intent');
+      }
+
+      // For extra charges, refund the full amount (they don't track partial refunds)
+      const refundAmount = dto.amount ? Number(dto.amount) : Number(extraCharge.totalAmount) / 100;
+      const totalAmountInPounds = Number(extraCharge.totalAmount) / 100;
+
+      if (refundAmount > totalAmountInPounds) {
+        throw new BadRequestError('Refund amount exceeds extra charge amount');
+      }
+
+      if (refundAmount <= 0) {
+        throw new BadRequestError('Refund amount must be greater than zero');
+      }
+
+      // Get Stripe charge ID (from payment intent)
+      const paymentIntent = await stripe.paymentIntents.retrieve(extraCharge.stripePaymentIntentId);
+      const chargeId = paymentIntent.latest_charge as string;
+
+      if (!chargeId) {
+        throw new BadRequestError('No charge found for this extra charge');
+      }
+
+      // Process refund via Stripe
+      const refundAmountInCents = Math.round(refundAmount * 100);
+      
+      // Check if this payment used Stripe Connect (has transfer_data)
+      const hasTransfer = paymentIntent.transfer_data?.destination;
+      
+      await stripe.refunds.create({
+        charge: chargeId,
+        amount: refundAmountInCents,
+        reverse_transfer: hasTransfer ? true : undefined,
+        reason: dto.reason ? 'requested_by_customer' : undefined,
+        metadata: {
+          extraChargeId: extraCharge.id,
+          bookingId: extraCharge.bookingId,
+          refundReason: dto.reason || '',
+        },
+      });
+
+      // Update extra charge status to CANCELLED (since there's no REFUNDED status)
+      const updatedExtraCharge = await prisma.bookingExtraCharge.update({
+        where: { id: extraCharge.id },
+        data: {
+          status: 'CANCELLED',
+          cancelledAt: new Date(),
+        },
+        include: {
+          booking: {
+            include: {
+              shipmentSlot: true,
+              customer: true,
+            },
+          },
+        },
+      });
+
+      // Notify customer about refund
+      await createNotification({
+        userId: extraCharge.booking.customer.id,
+        type: 'PAYMENT_REFUNDED',
+        title: 'Extra Charge Refunded',
+        body: `Your extra charge payment of £${refundAmount.toFixed(2)} for booking from ${extraCharge.booking.shipmentSlot.originCity} to ${extraCharge.booking.shipmentSlot.destinationCity} has been refunded${dto.reason ? `. Reason: ${dto.reason}` : ''}`,
+        metadata: {
+          bookingId: extraCharge.bookingId,
+          extraChargeId: extraCharge.id,
+          refundedAmount: refundAmount,
+          reason: dto.reason,
+        },
+      }).catch((err) => {
+        console.error('Failed to create refund notification:', err);
+      });
+
+      return {
+        id: updatedExtraCharge.id,
+        bookingId: updatedExtraCharge.bookingId,
+        booking: {
+          id: updatedExtraCharge.booking.id,
+          customer: {
+            id: updatedExtraCharge.booking.customer.id,
+            fullName: updatedExtraCharge.booking.customer.fullName,
+            email: updatedExtraCharge.booking.customer.email,
+          },
+          shipmentSlot: {
+            id: updatedExtraCharge.booking.shipmentSlot.id,
+            originCity: updatedExtraCharge.booking.shipmentSlot.originCity,
+            originCountry: updatedExtraCharge.booking.shipmentSlot.originCountry,
+            destinationCity: updatedExtraCharge.booking.shipmentSlot.destinationCity,
+            destinationCountry: updatedExtraCharge.booking.shipmentSlot.destinationCountry,
+          },
+        },
+        amount: totalAmountInPounds,
+        currency: 'GBP',
+        status: updatedExtraCharge.status,
+        paymentMethod: 'card',
+        stripePaymentIntentId: updatedExtraCharge.stripePaymentIntentId,
+        stripeChargeId: chargeId,
+        refundedAmount: refundAmount,
+        refundReason: dto.reason || null,
+        metadata: {},
+        createdAt: updatedExtraCharge.createdAt.toISOString(),
+        updatedAt: updatedExtraCharge.updatedAt.toISOString(),
+        paidAt: updatedExtraCharge.paidAt?.toISOString() || null,
+        refundedAt: new Date().toISOString(),
+      };
+    }
+
+    // Handle regular payment refund (existing logic)
     const payment = await paymentRepository.findById(paymentId);
 
     if (!payment) {

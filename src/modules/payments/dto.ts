@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { bookingIdValidator, paymentIdValidator, paymentOrExtraChargeIdValidator } from '../../utils/validators';
+import { bookingIdValidator, paymentOrExtraChargeIdValidator } from '../../utils/validators';
 
 export const createCheckoutSessionSchema = z.object({
   body: z.object({
@@ -30,7 +30,7 @@ export const getPaymentStatsSchema = z.object({
 
 export const processRefundSchema = z.object({
   params: z.object({
-    paymentId: paymentIdValidator,
+    paymentId: paymentOrExtraChargeIdValidator,
   }),
   body: z.object({
     amount: z.number().positive().optional(),
