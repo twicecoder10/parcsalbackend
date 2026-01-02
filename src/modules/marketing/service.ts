@@ -556,7 +556,7 @@ export const marketingService = {
 
     await createNotification({
       userId: recipient.id,
-      type: 'MARKETING_MESSAGE' as any,
+      type: 'MARKETING_MESSAGE',
       title: campaign.title || 'Message from Parcsal',
       body: `${senderLabel}\n\n${campaign.inAppBody || ''}`,
       metadata: {

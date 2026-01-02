@@ -175,6 +175,7 @@ model User {
   preferredShippingMode String?   // VAN, TRUCK, AIR, TRAIN, SHIP, RIDER
   notificationEmail     Boolean   @default(true)
   notificationSMS       Boolean   @default(false)
+  pushToken             String?   // Expo push notification token for mobile app
   onboardingSteps       Json?     @default("{}") // Track onboarding progress: { stepName: { completed: boolean, completedAt?: DateTime } }
   onboardingCompleted   Boolean   @default(false)
   restrictions          Json?     @default("{}") // Staff action restrictions: { actionName: boolean } - only for COMPANY_STAFF

@@ -396,7 +396,7 @@ export const companyService = {
   },
 
   // Analytics
-  async getAnalytics(req: AuthRequest, period: 'week' | 'month' | 'quarter' | 'year') {
+  async getAnalytics(req: AuthRequest, period: 'week' | 'month' | 'quarter' | 'year', periodOffset: number = 0) {
     // Check staff permission
     await checkStaffPermission(req, 'viewAnalytics');
 
@@ -407,26 +407,48 @@ export const companyService = {
     const companyId = req.user.companyId;
     const now = new Date();
     let startDate: Date;
+    let endDate: Date;
     let previousStartDate: Date;
+    let previousEndDate: Date;
 
     switch (period) {
-      case 'week':
-        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        previousStartDate = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+      case 'week': {
+        // Week = last 7 days (rolling window)
+        // offset=0: last 7 days from now
+        // offset=1: the 7 days before that (8-14 days ago), etc.
+        const daysBack = periodOffset * 7;
+        const periodEnd = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);
+        startDate = new Date(periodEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+        endDate = periodEnd;
+        previousStartDate = new Date(startDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+        previousEndDate = startDate;
         break;
-      case 'month':
-        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-        previousStartDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      }
+      case 'month': {
+        const targetDate = new Date(now.getFullYear(), now.getMonth() - periodOffset, 1);
+        startDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
+        endDate = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 1);
+        previousStartDate = new Date(targetDate.getFullYear(), targetDate.getMonth() - 1, 1);
+        previousEndDate = startDate;
         break;
-      case 'quarter':
-        const quarter = Math.floor(now.getMonth() / 3);
-        startDate = new Date(now.getFullYear(), quarter * 3, 1);
-        previousStartDate = new Date(now.getFullYear(), (quarter - 1) * 3, 1);
+      }
+      case 'quarter': {
+        const targetDate = new Date(now.getFullYear(), now.getMonth() - (periodOffset * 3), 1);
+        const quarter = Math.floor(targetDate.getMonth() / 3);
+        startDate = new Date(targetDate.getFullYear(), quarter * 3, 1);
+        endDate = new Date(targetDate.getFullYear(), (quarter + 1) * 3, 1);
+        previousStartDate = new Date(targetDate.getFullYear(), (quarter - 1) * 3, 1);
+        previousEndDate = startDate;
         break;
-      case 'year':
-        startDate = new Date(now.getFullYear(), 0, 1);
-        previousStartDate = new Date(now.getFullYear() - 1, 0, 1);
+      }
+      case 'year': {
+        const targetYear = now.getFullYear() - periodOffset;
+        startDate = new Date(targetYear, 0, 1);
+        endDate = new Date(targetYear + 1, 0, 1);
+        previousStartDate = new Date(targetYear - 1, 0, 1);
+        previousEndDate = startDate;
         break;
+      }
       default:
         throw new BadRequestError('Invalid period. Must be week, month, quarter, or year');
     }
@@ -437,7 +459,7 @@ export const companyService = {
         companyId,
         status: 'ACCEPTED',
         paymentStatus: 'PAID',
-        createdAt: { gte: startDate },
+        createdAt: { gte: startDate, lt: endDate },
       },
       _sum: { calculatedPrice: true },
     });
@@ -447,7 +469,7 @@ export const companyService = {
         companyId,
         status: 'ACCEPTED',
         paymentStatus: 'PAID',
-        createdAt: { gte: previousStartDate, lt: startDate },
+        createdAt: { gte: previousStartDate, lt: previousEndDate },
       },
       _sum: { calculatedPrice: true },
     });
@@ -462,19 +484,19 @@ export const companyService = {
     // Bookings data
     const [currentBookings, previousBookings, acceptedBookings, pendingBookings, rejectedBookings] = await Promise.all([
       prisma.booking.count({
-        where: { companyId, createdAt: { gte: startDate } },
+        where: { companyId, createdAt: { gte: startDate, lt: endDate } },
       }),
       prisma.booking.count({
-        where: { companyId, createdAt: { gte: previousStartDate, lt: startDate } },
+        where: { companyId, createdAt: { gte: previousStartDate, lt: previousEndDate } },
       }),
       prisma.booking.count({
-        where: { companyId, status: 'ACCEPTED', createdAt: { gte: startDate } },
+        where: { companyId, status: 'ACCEPTED', createdAt: { gte: startDate, lt: endDate } },
       }),
       prisma.booking.count({
-        where: { companyId, status: 'PENDING', createdAt: { gte: startDate } },
+        where: { companyId, status: 'PENDING', createdAt: { gte: startDate, lt: endDate } },
       }),
       prisma.booking.count({
-        where: { companyId, status: 'REJECTED', createdAt: { gte: startDate } },
+        where: { companyId, status: 'REJECTED', createdAt: { gte: startDate, lt: endDate } },
       }),
     ]);
 
@@ -484,18 +506,32 @@ export const companyService = {
         : ((currentBookings - previousBookings) / previousBookings) * 100;
 
     // Shipments data
+    // For active/published: count shipments created during the period
+    // For completed: count shipments closed during the period
     const [activeShipments, publishedShipments, completedShipments, previousActiveShipments] = await Promise.all([
       prisma.shipmentSlot.count({
-        where: { companyId, status: { in: ['DRAFT', 'PUBLISHED'] } },
+        where: { 
+          companyId, 
+          status: { in: ['DRAFT', 'PUBLISHED'] },
+          createdAt: { gte: startDate, lt: endDate },
+        },
       }),
       prisma.shipmentSlot.count({
-        where: { companyId, status: 'PUBLISHED' },
+        where: { 
+          companyId, 
+          status: 'PUBLISHED',
+          createdAt: { gte: startDate, lt: endDate },
+        },
       }),
       prisma.shipmentSlot.count({
-        where: { companyId, status: 'CLOSED', updatedAt: { gte: startDate } },
+        where: { companyId, status: 'CLOSED', updatedAt: { gte: startDate, lt: endDate } },
       }),
       prisma.shipmentSlot.count({
-        where: { companyId, status: { in: ['DRAFT', 'PUBLISHED'] }, updatedAt: { lt: startDate } },
+        where: { 
+          companyId, 
+          status: { in: ['DRAFT', 'PUBLISHED'] },
+          createdAt: { gte: previousStartDate, lt: previousEndDate },
+        },
       }),
     ]);
 
@@ -509,7 +545,7 @@ export const companyService = {
       by: ['shipmentSlotId'],
       where: {
         companyId,
-        createdAt: { gte: startDate },
+        createdAt: { gte: startDate, lt: endDate },
       },
       _count: { id: true },
       _sum: { calculatedPrice: true },
@@ -545,7 +581,7 @@ export const companyService = {
         companyId,
         status: 'ACCEPTED',
         paymentStatus: 'PAID',
-        createdAt: { gte: startDate },
+        createdAt: { gte: startDate, lt: endDate },
       },
       select: {
         calculatedPrice: true,
@@ -579,7 +615,31 @@ export const companyService = {
       revenue: Number(revenue.toFixed(2)),
     }));
 
+    // Format period label for frontend display
+    let periodLabel: string;
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    
+    if (period === 'year') {
+      periodLabel = String(startDate.getFullYear());
+    } else if (period === 'quarter') {
+      const quarter = Math.floor(startDate.getMonth() / 3) + 1;
+      periodLabel = `Q${quarter} ${startDate.getFullYear()}`;
+    } else if (period === 'month') {
+      periodLabel = `${monthNames[startDate.getMonth()]} ${startDate.getFullYear()}`;
+    } else {
+      // week: show date range
+      const startFormatted = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const endFormatted = new Date(endDate.getTime() - 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      periodLabel = `${startFormatted} - ${endFormatted}`;
+    }
+
     return {
+      period: {
+        type: period,
+        label: periodLabel,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+      },
       revenue: {
         total: Number(revenueValue.toFixed(2)),
         changePercentage: Number(revenueChangePercentage.toFixed(2)),

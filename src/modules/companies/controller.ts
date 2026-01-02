@@ -114,14 +114,21 @@ export const companyController = {
 
   async getAnalytics(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const { period } = req.query;
+      const { period, offset } = req.query;
       if (!period || !['week', 'month', 'quarter', 'year'].includes(period as string)) {
         return res.status(400).json({
           status: 'error',
           message: 'Period is required and must be week, month, quarter, or year',
         });
       }
-      const analytics = await companyService.getAnalytics(req, period as 'week' | 'month' | 'quarter' | 'year');
+      const periodOffset = offset ? parseInt(offset as string, 10) : 0;
+      if (isNaN(periodOffset) || periodOffset < 0) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Offset must be a non-negative integer',
+        });
+      }
+      const analytics = await companyService.getAnalytics(req, period as 'week' | 'month' | 'quarter' | 'year', periodOffset);
       return res.status(200).json({
         status: 'success',
         data: analytics,

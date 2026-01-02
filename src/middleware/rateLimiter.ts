@@ -129,3 +129,26 @@ export const refreshTokenLimiter = rateLimit({
   skip: () => isTest, // Skip rate limiting entirely in test environment
 });
 
+/**
+ * Analytics rate limiter (read-only endpoints)
+ * Development: 500 requests per 15 minutes per user/IP
+ * Production: 300 requests per 15 minutes per user/IP
+ * More lenient than general limiter since analytics are read-only
+ */
+export const analyticsLimiter = rateLimit({
+  store: new RedisStore({
+    sendCommand,
+    prefix: 'rl:analytics:',
+  }),
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: isDevelopment ? 500 : isTest ? 10000 : 300, // More lenient for read-only analytics
+  message: 'Too many analytics requests, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: any) => {
+    // Use user ID if authenticated, otherwise use IP
+    return req.user?.id || ipKeyGenerator(req) || 'unknown';
+  },
+  skip: () => isTest, // Skip rate limiting entirely in test environment
+});
+

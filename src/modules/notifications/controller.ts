@@ -77,5 +77,18 @@ export const notificationController = {
       next(error);
     }
   },
+
+  async registerPushToken(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { token } = req.body as { token: string };
+      const result = await notificationService.registerPushToken(req, token);
+      res.status(200).json({
+        status: 'success',
+        message: result.message,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 };
 

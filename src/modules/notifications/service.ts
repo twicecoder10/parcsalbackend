@@ -1,7 +1,8 @@
 import prisma from '../../config/database';
-import { NotFoundError, ForbiddenError } from '../../utils/errors';
+import { NotFoundError, ForbiddenError, BadRequestError } from '../../utils/errors';
 import { AuthRequest } from '../../middleware/auth';
 import { parsePagination, createPaginatedResponse } from '../../utils/pagination';
+import { emitUnreadCount, emitNotificationUpdate, emitNotificationDelete } from '../../utils/notifications';
 
 export const notificationService = {
   async getNotifications(req: AuthRequest, query: any) {
@@ -68,10 +69,13 @@ export const notificationService = {
       throw new ForbiddenError('You do not have permission to update this notification');
     }
 
-    await prisma.notification.update({
+    const updatedNotification = await prisma.notification.update({
       where: { id: notificationId },
       data: { isRead: true },
     });
+
+    // Emit real-time update via Socket.IO
+    await emitNotificationUpdate(req.user.id, updatedNotification);
 
     return { message: 'Notification marked as read' };
   },
@@ -88,6 +92,9 @@ export const notificationService = {
       },
       data: { isRead: true },
     });
+
+    // Emit real-time unread count update (should be 0 now)
+    await emitUnreadCount(req.user.id);
 
     return { message: 'All notifications marked as read' };
   },
@@ -113,6 +120,9 @@ export const notificationService = {
       where: { id: notificationId },
     });
 
+    // Emit real-time deletion event and unread count update
+    await emitNotificationDelete(req.user.id, notificationId);
+
     return { message: 'Notification deleted successfully' };
   },
 
@@ -128,7 +138,34 @@ export const notificationService = {
       },
     });
 
+    // Emit real-time unread count update (shouldn't change since we're deleting read notifications)
+    await emitUnreadCount(req.user.id);
+
     return { message: `${result.count} notifications deleted successfully`, count: result.count };
+  },
+
+  async registerPushToken(req: AuthRequest, pushToken: string) {
+    if (!req.user) {
+      throw new ForbiddenError('Authentication required');
+    }
+
+    if (!pushToken || typeof pushToken !== 'string') {
+      throw new BadRequestError('Push token is required');
+    }
+
+    // Validate Expo push token format (optional but recommended)
+    if (!pushToken.startsWith('ExponentPushToken[') && !pushToken.startsWith('ExpoPushToken[')) {
+      // Still allow registration but log warning
+      console.warn(`[Push Token] Invalid Expo push token format for user ${req.user.id}`);
+    }
+
+    // Update user's push token
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { pushToken },
+    });
+
+    return { message: 'Push token registered successfully' };
   },
 };
 

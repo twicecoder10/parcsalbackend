@@ -1,4 +1,6 @@
 import prisma from '../config/database';
+import { Server as SocketIOServer } from 'socket.io';
+import { sendPushNotificationToUser } from './push-notifications';
 
 export type NotificationType =
   | 'BOOKING_CREATED'
@@ -22,7 +24,8 @@ export type NotificationType =
   | 'EXTRA_CHARGE_REQUESTED'
   | 'EXTRA_CHARGE_PAID'
   | 'EXTRA_CHARGE_DECLINED'
-  | 'EXTRA_CHARGE_CANCELLED';
+  | 'EXTRA_CHARGE_CANCELLED'
+  | 'MARKETING_MESSAGE';
 
 export interface CreateNotificationData {
   userId: string;
@@ -30,6 +33,119 @@ export interface CreateNotificationData {
   title: string;
   body: string;
   metadata?: Record<string, any>;
+}
+
+// Socket.IO instance (initialized from server.ts)
+let ioInstance: SocketIOServer | null = null;
+
+/**
+ * Initialize Socket.IO instance for notifications
+ * Call this from server.ts after Socket.IO is set up
+ */
+export function initializeNotificationSocket(io: SocketIOServer) {
+  ioInstance = io;
+}
+
+/**
+ * Emit unread count update to user via Socket.IO
+ * Helper function that can be reused for mark-as-read, delete, etc.
+ */
+export async function emitUnreadCount(userId: string) {
+  if (!ioInstance) {
+    // Socket.IO not initialized yet, skip emission
+    return;
+  }
+
+  try {
+    const unreadCount = await prisma.notification.count({
+      where: {
+        userId,
+        isRead: false,
+      },
+    });
+
+    ioInstance.to(`user:${userId}`).emit('notification:unreadCount', {
+      count: unreadCount,
+    });
+  } catch (error) {
+    // Don't fail if Socket.IO emission fails
+    console.error('[Notification] Error emitting unread count:', error);
+  }
+}
+
+/**
+ * Emit notification update event (e.g., when marked as read)
+ */
+export async function emitNotificationUpdate(userId: string, notification: any) {
+  if (!ioInstance) {
+    return;
+  }
+
+  try {
+    ioInstance.to(`user:${userId}`).emit('notification:updated', {
+      id: notification.id,
+      type: notification.type,
+      title: notification.title,
+      body: notification.body,
+      metadata: notification.metadata,
+      isRead: notification.isRead,
+      createdAt: notification.createdAt,
+    });
+
+    // Emit updated unread count
+    await emitUnreadCount(userId);
+  } catch (error) {
+    console.error('[Notification] Error emitting notification update:', error);
+  }
+}
+
+/**
+ * Emit notification deletion event
+ */
+export async function emitNotificationDelete(userId: string, notificationId: string) {
+  if (!ioInstance) {
+    return;
+  }
+
+  try {
+    ioInstance.to(`user:${userId}`).emit('notification:deleted', {
+      id: notificationId,
+    });
+
+    // Emit updated unread count (in case deleted notification was unread)
+    await emitUnreadCount(userId);
+  } catch (error) {
+    console.error('[Notification] Error emitting notification deletion:', error);
+  }
+}
+
+/**
+ * Emit notification to user via Socket.IO
+ */
+async function emitNotification(userId: string, notification: any) {
+  if (!ioInstance) {
+    // Socket.IO not initialized yet, skip emission
+    return;
+  }
+
+  try {
+    // Emit new notification
+    ioInstance.to(`user:${userId}`).emit('notification:new', {
+      id: notification.id,
+      type: notification.type,
+      title: notification.title,
+      body: notification.body,
+      metadata: notification.metadata,
+      isRead: notification.isRead,
+      createdAt: notification.createdAt,
+    });
+
+    // Emit updated unread count using helper function
+    await emitUnreadCount(userId);
+  } catch (error) {
+    // Don't fail notification creation if Socket.IO emission fails
+    console.error('[Notification] Error emitting Socket.IO event:', error);
+  }
 }
 
 /**
@@ -46,6 +162,7 @@ export async function createNotification(data: CreateNotificationData) {
         notificationSMS: true,
         email: true,
         fullName: true,
+        pushToken: true,
       },
     });
 
@@ -64,6 +181,23 @@ export async function createNotification(data: CreateNotificationData) {
         metadata: data.metadata || {},
       },
     });
+
+    // Emit real-time notification via Socket.IO
+    await emitNotification(data.userId, notification);
+
+    // Send push notification if user has a push token (for when app is closed)
+    // Note: When app is open/backgrounded, Socket.IO + local push notifications handle it
+    if (user.pushToken) {
+      // Send push notification asynchronously (don't wait for it)
+      sendPushNotificationToUser(data.userId, data.title, data.body, {
+        notificationId: notification.id,
+        type: data.type,
+        ...(data.metadata?.bookingId && { bookingId: data.metadata.bookingId }),
+        ...(data.metadata?.shipmentSlotId && { shipmentSlotId: data.metadata.shipmentSlotId }),
+      }).catch((error) => {
+        console.error('[Notification] Error sending push notification:', error);
+      });
+    }
 
     // TODO: Send email/SMS based on user preferences
     // For now, we just create the notification in the database

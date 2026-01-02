@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { companyController } from './controller';
 import { authenticate, requireCompanyAccess } from '../../middleware/auth';
 import { validate } from '../../middleware/validator';
+import { analyticsLimiter } from '../../middleware/rateLimiter';
 import { updateCompanySchema, completeCompanyOnboardingSchema, createWarehouseAddressSchema, updateWarehouseAddressSchema, deleteWarehouseAddressSchema, getCompanyWarehousesSchema, getPublicCompanyProfileSchema, getCompanyShipmentsSchema, browseCompaniesSchema, staffRestrictionsSchema } from './dto';
 
 const router = Router();
@@ -57,6 +58,7 @@ router.get(
   '/analytics',
   authenticate,
   requireCompanyAccess,
+  analyticsLimiter,
   companyController.getAnalytics
 );
 

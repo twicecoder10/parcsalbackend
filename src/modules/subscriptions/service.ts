@@ -11,6 +11,30 @@ const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
 });
 
+/**
+ * Helper function to find a CompanyPlan by matching the monthly price from Stripe subscription
+ */
+async function findPlanByStripePrice(stripePriceAmount: number): Promise<string | null> {
+  // Convert from cents to pounds (Stripe stores prices in the smallest currency unit)
+  const monthlyPrice = stripePriceAmount / 100;
+  
+  // Find the plan with matching monthly price (allowing for small rounding differences)
+  const plans = await prisma.companyPlan.findMany();
+  
+  // Find exact match first
+  const exactMatch = plans.find(
+    plan => Math.abs(Number(plan.priceMonthly) - monthlyPrice) < 0.01
+  );
+  
+  if (exactMatch) {
+    return exactMatch.id;
+  }
+  
+  // Log warning if no match found
+  console.warn(`[Subscription Webhook] No plan found matching price: £${monthlyPrice.toFixed(2)}`);
+  return null;
+}
+
 export const subscriptionService = {
   async createCheckoutSession(req: AuthRequest, dto: CreateSubscriptionCheckoutDto) {
     if (!req.user || !req.user.companyId) {
@@ -247,26 +271,71 @@ export const subscriptionService = {
       const dbSubscription = await subscriptionRepository.findByStripeSubscriptionId(subscription.id);
 
       if (dbSubscription) {
+        const newStatus = subscription.status === 'active' ? 'ACTIVE' : subscription.status === 'past_due' ? 'PAST_DUE' : 'CANCELLED';
+        
+        // Detect plan changes by checking the subscription item price
+        let newPlanId: string | null = dbSubscription.companyPlanId;
+        let planChanged = false;
+        
+        if (subscription.items?.data && subscription.items.data.length > 0) {
+          const subscriptionItem = subscription.items.data[0];
+          let priceAmount: number | null = null;
+          
+          // Handle expanded price object (common in webhooks)
+          if (subscriptionItem.price && typeof subscriptionItem.price === 'object' && 'unit_amount' in subscriptionItem.price) {
+            const priceObj = subscriptionItem.price as Stripe.Price;
+            priceAmount = priceObj.unit_amount; // Can be null for usage-based pricing
+          } else if (subscriptionItem.price && typeof subscriptionItem.price === 'string') {
+            // Price is just an ID, need to fetch it
+            try {
+              const price = await stripe.prices.retrieve(subscriptionItem.price);
+              priceAmount = price.unit_amount;
+            } catch (err: any) {
+              console.warn(`[Subscription Webhook] Failed to retrieve price ${subscriptionItem.price}:`, err.message);
+            }
+          }
+          
+          if (priceAmount !== null) {
+            const detectedPlanId = await findPlanByStripePrice(priceAmount);
+            
+            if (detectedPlanId && detectedPlanId !== dbSubscription.companyPlanId) {
+              newPlanId = detectedPlanId;
+              planChanged = true;
+              
+              // Update the subscription's planId
+              await subscriptionRepository.updatePlan(dbSubscription.id, detectedPlanId);
+              
+              console.log(`[Subscription Webhook] Plan changed for subscription ${subscription.id}: ${dbSubscription.companyPlanId} -> ${detectedPlanId}`);
+            }
+          }
+        }
+        
+        // Update subscription status and period dates
         await subscriptionRepository.updateStatus(
           dbSubscription.id,
-          subscription.status === 'active' ? 'ACTIVE' : subscription.status === 'past_due' ? 'PAST_DUE' : 'CANCELLED',
+          newStatus,
           new Date(subscription.current_period_start * 1000),
           new Date(subscription.current_period_end * 1000)
         );
 
+        // Update company's active plan and expiration date
         if (subscription.status === 'active') {
           await subscriptionRepository.updateCompanyPlan(
             dbSubscription.companyId,
-            dbSubscription.companyPlanId,
+            newPlanId || dbSubscription.companyPlanId,
             new Date(subscription.current_period_end * 1000)
           );
         }
 
         return { 
           received: true, 
-          message: 'Subscription updated successfully',
+          message: planChanged 
+            ? 'Subscription updated successfully with plan change' 
+            : 'Subscription updated successfully',
           eventType: event.type,
-          subscriptionId: dbSubscription.id
+          subscriptionId: dbSubscription.id,
+          planChanged,
+          ...(planChanged && newPlanId ? { newPlanId } : {})
         };
       } else {
         console.warn(`[Subscription Webhook] customer.subscription.updated: Subscription ${subscription.id} not found in database`);

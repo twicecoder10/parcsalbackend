@@ -4,6 +4,7 @@ import app from './app';
 import { config } from './config/env';
 import prisma from './config/database';
 import { setupChatSocket } from './modules/chat/socket';
+import { initializeNotificationSocket } from './utils/notifications';
 
 const PORT = config.port;
 
@@ -80,6 +81,9 @@ async function startServer() {
       console.warn('⚠️  Failed to initialize Socket.IO Redis adapter:', error.message);
       console.warn('   Socket.IO will work but won\'t scale across multiple servers');
     }
+
+    // Initialize notification Socket.IO instance
+    initializeNotificationSocket(io);
 
     // Setup chat socket handlers
     setupChatSocket(io);

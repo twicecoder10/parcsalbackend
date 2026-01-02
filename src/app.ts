@@ -100,7 +100,7 @@ app.use(urlencodedParser);
 // Request logging middleware (after body parsers, before routes)
 app.use(requestLogger);
 
-// Apply general rate limiting to all routes (except webhooks)
+// Apply general rate limiting to all routes (except webhooks and analytics)
 app.use((req, res, next) => {
   // Skip rate limiting for webhook routes (they have their own validation)
   if (
@@ -108,6 +108,10 @@ app.use((req, res, next) => {
     req.path === '/webhook/stripe' ||
     req.path === '/subscriptions/webhooks/stripe-subscriptions'
   ) {
+    return next();
+  }
+  // Skip general rate limiting for analytics routes (they have their own limiter)
+  if (req.path === '/companies/analytics' || req.path.startsWith('/companies/analytics?')) {
     return next();
   }
   generalLimiter(req, res, next);

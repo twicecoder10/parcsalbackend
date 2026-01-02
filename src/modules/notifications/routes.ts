@@ -10,6 +10,7 @@ router.put('/:notificationId/read', authenticate, notificationController.markAsR
 router.put('/read-all', authenticate, notificationController.markAllAsRead);
 router.delete('/:notificationId', authenticate, notificationController.deleteNotification);
 router.delete('/read/all', authenticate, notificationController.deleteAllRead);
+router.post('/push-token', authenticate, notificationController.registerPushToken);
 
 export default router;
 

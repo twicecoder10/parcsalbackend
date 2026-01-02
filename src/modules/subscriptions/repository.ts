@@ -67,6 +67,20 @@ export const subscriptionRepository = {
     });
   },
 
+  async updatePlan(
+    id: string,
+    companyPlanId: string
+  ): Promise<Subscription> {
+    return prisma.subscription.update({
+      where: { id },
+      data: { companyPlanId },
+      include: {
+        companyPlan: true,
+        company: true,
+      },
+    });
+  },
+
   async updateCompanyPlan(companyId: string, planId: string, planExpiresAt: Date | null): Promise<void> {
     await prisma.company.update({
       where: { id: companyId },
