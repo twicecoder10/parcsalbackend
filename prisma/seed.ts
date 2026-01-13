@@ -11,44 +11,95 @@ const SALT_ROUNDS = 10;
 async function main() {
   console.log('🌱 Seeding database...');
 
-  // Create default company plans
-  const basicPlan = await prisma.companyPlan.upsert({
-    where: { name: 'Basic' },
-    update: {},
+  // Create default company plans (matching new CarrierPlan enum)
+  const freePlan = await prisma.companyPlan.upsert({
+    where: { name: 'FREE' },
+    update: {
+      carrierPlan: 'FREE',
+      priceMonthly: 0,
+      maxActiveShipmentSlots: null, // unlimited
+      maxTeamMembers: 1,
+      isDefault: true,
+    },
     create: {
-      name: 'Basic',
-      priceMonthly: 29.99,
-      maxActiveShipmentSlots: 10,
+      name: 'FREE',
+      carrierPlan: 'FREE',
+      priceMonthly: 0,
+      maxActiveShipmentSlots: null, // unlimited
+      maxTeamMembers: 1,
+      isDefault: false,
+    },
+  });
+
+  const starterPlan = await prisma.companyPlan.upsert({
+    where: { name: 'STARTER' },
+    update: {
+      carrierPlan: 'STARTER',
+      priceMonthly: 49,
+      maxActiveShipmentSlots: null, // unlimited
+      maxTeamMembers: 3,
+      isDefault: true,
+    },
+    create: {
+      name: 'STARTER',
+      carrierPlan: 'STARTER',
+      priceMonthly: 49,
+      maxActiveShipmentSlots: null, // unlimited
       maxTeamMembers: 3,
       isDefault: false,
     },
   });
 
-  const proPlan = await prisma.companyPlan.upsert({
-    where: { name: 'Pro' },
-    update: {},
+  const professionalPlan = await prisma.companyPlan.upsert({
+    where: { name: 'PROFESSIONAL' },
+    update: {
+      carrierPlan: 'PROFESSIONAL',
+      priceMonthly: 149,
+      maxActiveShipmentSlots: null, // unlimited
+      maxTeamMembers: 10,
+      isDefault: false,
+    },
     create: {
-      name: 'Pro',
-      priceMonthly: 99.99,
-      maxActiveShipmentSlots: 50,
+      name: 'PROFESSIONAL',
+      carrierPlan: 'PROFESSIONAL',
+      priceMonthly: 149,
+      maxActiveShipmentSlots: null, // unlimited
       maxTeamMembers: 10,
       isDefault: false,
     },
   });
 
   const enterprisePlan = await prisma.companyPlan.upsert({
-    where: { name: 'Enterprise' },
-    update: {},
-    create: {
-      name: 'Enterprise',
-      priceMonthly: 299.99,
+    where: { name: 'ENTERPRISE' },
+    update: {
+      carrierPlan: 'ENTERPRISE',
+      priceMonthly: 500,
       maxActiveShipmentSlots: null, // unlimited
       maxTeamMembers: null, // unlimited
-      isDefault: true,
+      isDefault: false,
+    },
+    create: {
+      name: 'ENTERPRISE',
+      carrierPlan: 'ENTERPRISE',
+      priceMonthly: 500,
+      maxActiveShipmentSlots: null, // unlimited
+      maxTeamMembers: null, // unlimited
+      isDefault: false,
     },
   });
 
-  console.log('✅ Created company plans:', { basicPlan, proPlan, enterprisePlan });
+  // Remove old plans if they exist
+  await prisma.companyPlan.deleteMany({
+    where: {
+      name: {
+        in: ['Basic', 'Pro', 'Enterprise'],
+      },
+    },
+  }).catch(() => {
+    // Ignore if they don't exist
+  });
+
+  console.log('✅ Created/updated company plans:', { freePlan, starterPlan, professionalPlan, enterprisePlan });
 
   // Create super admin user
   const superAdminEmail = process.env.SUPER_ADMIN_EMAIL || 'admin@parcsal.com';
@@ -89,4 +140,5 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
+
 

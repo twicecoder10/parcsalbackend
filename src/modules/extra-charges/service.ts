@@ -4,6 +4,7 @@ import { NotFoundError, ForbiddenError, BadRequestError } from '../../utils/erro
 import { AuthRequest } from '../../middleware/auth';
 import prisma from '../../config/database';
 import { calculateBookingCharges } from '../../utils/paymentCalculator';
+import { getEffectiveCommissionBps } from '../billing/plans';
 import Stripe from 'stripe';
 import { config } from '../../config/env';
 import { createNotification, createCompanyNotification } from '../../utils/notifications';
@@ -61,8 +62,15 @@ export const extraChargeService = {
       throw new ForbiddenError('You do not have permission to create extra charges for this booking');
     }
 
-    // Calculate charges using the same payment calculator
-    const charges = calculateBookingCharges(dto.baseAmountMinor);
+    // Get company for commission rate
+    const company = await prisma.company.findUnique({
+      where: { id: req.user.companyId },
+      select: { commissionRateBps: true },
+    });
+
+    // Calculate charges using the same payment calculator with company's commission rate
+    const commissionBps = company ? getEffectiveCommissionBps(company) : 1500; // Default 15%
+    const charges = calculateBookingCharges(dto.baseAmountMinor, commissionBps);
 
     // Calculate expiration date
     const expiresAt = new Date();

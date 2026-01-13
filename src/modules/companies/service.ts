@@ -849,36 +849,15 @@ export const companyService = {
       throw new BadRequestError('A pending invitation already exists for this email');
     }
 
-    // Check plan limits
+    // Check plan limits using new entitlement system
+    const { checkTeamMemberLimit } = await import('../../middleware/entitlements');
+    await checkTeamMemberLimit(companyId);
+
+    // Get company for name
     const company = await prisma.company.findUnique({
       where: { id: companyId },
-      include: { activePlan: true },
+      select: { name: true },
     });
-
-    if (company?.activePlan) {
-      const currentTeamCount = await prisma.user.count({
-        where: {
-          companyId,
-          role: {
-            in: ['COMPANY_ADMIN', 'COMPANY_STAFF'],
-          },
-        },
-      });
-
-      const pendingInvitationsCount = await prisma.teamInvitation.count({
-        where: {
-          companyId,
-          status: 'PENDING',
-        },
-      });
-
-      const maxTeamMembers = company.activePlan.maxTeamMembers;
-      if (maxTeamMembers !== null && (currentTeamCount + pendingInvitationsCount) >= maxTeamMembers) {
-        throw new BadRequestError(
-          `Plan limit reached. Maximum ${maxTeamMembers} team members allowed.`
-        );
-      }
-    }
 
     // Create invitation (expires in 7 days)
     const expiresAt = new Date();

@@ -20,6 +20,7 @@ import { generateBookingId } from '../../utils/bookingId';
 import { deleteImagesByUrls } from '../../utils/upload';
 import { generateShippingLabel } from '../../utils/labelGenerator';
 import { calculateBookingCharges } from '../../utils/paymentCalculator';
+import { getEffectiveCommissionBps } from '../billing/plans';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -670,8 +671,17 @@ export const bookingService = {
     // This ensures frontend always has fee breakdown before payment
     const bookingWithFees = booking as any;
     if (booking.paymentStatus === 'PENDING' && (!bookingWithFees.baseAmount || !bookingWithFees.totalAmount)) {
+      // Get company for commission rate
+      const company = booking.companyId
+        ? await prisma.company.findUnique({
+            where: { id: booking.companyId },
+            select: { commissionRateBps: true },
+          })
+        : null;
+
       const baseAmountMinor = Math.round(Number(booking.calculatedPrice) * 100);
-      const charges = calculateBookingCharges(baseAmountMinor);
+      const commissionBps = company ? getEffectiveCommissionBps(company) : 1500; // Default 15% if no company
+      const charges = calculateBookingCharges(baseAmountMinor, commissionBps);
       
       // Add calculated fees to booking object for response
       bookingWithFees.baseAmount = charges.baseAmount;

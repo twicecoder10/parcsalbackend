@@ -10,6 +10,7 @@ import { createNotification, createCompanyNotification } from '../../utils/notif
 import { emailService } from '../../config/email';
 import { generatePaymentId } from '../../utils/paymentId';
 import { calculateBookingCharges } from '../../utils/paymentCalculator';
+import { getEffectiveCommissionBps } from '../billing/plans';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -59,9 +60,18 @@ export const paymentService = {
       throw new BadRequestError('Payment already completed');
     }
 
-    // Calculate fees using payment calculator
+    // Get company for commission rate
+    const companyForCommission = booking.companyId
+      ? await prisma.company.findUnique({
+          where: { id: booking.companyId },
+          select: { commissionRateBps: true },
+        })
+      : null;
+
+    // Calculate fees using payment calculator with company's commission rate
     const baseAmountMinor = Math.round(Number(booking.calculatedPrice) * 100);
-    const charges = calculateBookingCharges(baseAmountMinor);
+    const commissionBps = companyForCommission ? getEffectiveCommissionBps(companyForCommission) : 1500; // Default 15% if no company
+    const charges = calculateBookingCharges(baseAmountMinor, commissionBps);
 
     // Update booking with fee breakdown
     await prisma.booking.update({
@@ -113,20 +123,20 @@ export const paymentService = {
     // - transfer_data.amount: charges.baseAmount (company receives exactly the base shipment price)
     // Platform keeps the remainder (totalAmount - baseAmount) which includes admin fee + processing fee.
     // Note: We do NOT set application_fee_amount as it conflicts with transfer_data.amount.
-    const company = booking.shipmentSlot.company;
-    if (company && (company as any).stripeAccountId && (company as any).chargesEnabled) {
+    const companyForStripe = booking.shipmentSlot.company;
+    if (companyForStripe && (companyForStripe as any).stripeAccountId && (companyForStripe as any).chargesEnabled) {
       sessionParams.payment_intent_data = {
         ...sessionParams.payment_intent_data,
         // Destination charge to the connected account
         transfer_data: {
-          destination: (company as any).stripeAccountId,
+          destination: (companyForStripe as any).stripeAccountId,
           // Send EXACTLY the base shipment amount to the company
           amount: charges.baseAmount,
         },
         metadata: {
           bookingId: booking.id,
           customerId: booking.customerId,
-          companyId: company.id,
+          companyId: companyForStripe.id,
           // Include breakdown for debugging
           baseAmount: charges.baseAmount.toString(),
           adminFeeAmount: charges.adminFeeAmount.toString(),
@@ -137,8 +147,8 @@ export const paymentService = {
 
     } else {
       console.warn(`[Payment] Company ${booking.companyId} does not have Stripe Connect enabled. Payment will go to platform account.`, {
-        hasStripeAccountId: !!(company && (company as any).stripeAccountId),
-        chargesEnabled: !!(company && (company as any).chargesEnabled),
+        hasStripeAccountId: !!(companyForStripe && (companyForStripe as any).stripeAccountId),
+        chargesEnabled: !!(companyForStripe && (companyForStripe as any).chargesEnabled),
       });
     }
 

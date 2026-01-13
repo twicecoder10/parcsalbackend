@@ -5,7 +5,7 @@ import { shipmentRepository } from '../shipments/repository';
 import { parsePagination, createPaginatedResponse } from '../../utils/pagination';
 import { settingsManager } from '../../utils/settings';
 import prisma from '../../config/database';
-import { Prisma } from '@prisma/client';
+import { Prisma, CarrierPlan } from '@prisma/client';
 
 // Helper functions
 async function getRevenueForPeriod(startDate: Date, endDate: Date): Promise<number> {
@@ -1262,5 +1262,125 @@ export const adminService = {
     }
 
     return { format: 'json', data: companiesWithRevenue };
+  },
+
+  // Billing Management
+  async updateCompanyPlan(
+    companyId: string,
+    data: {
+      plan: CarrierPlan;
+      commissionRateBps?: number;
+      rankingTier?: 'STANDARD' | 'PRIORITY' | 'HIGHEST' | 'CUSTOM';
+    }
+  ) {
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
+    const updateData: any = {
+      plan: data.plan,
+      planActive: true,
+      planStartedAt: company.planStartedAt || new Date(),
+    };
+
+    if (data.commissionRateBps !== undefined) {
+      updateData.commissionRateBps = data.commissionRateBps;
+    }
+
+    if (data.rankingTier !== undefined) {
+      updateData.rankingTier = data.rankingTier;
+    }
+
+    const updated = await prisma.company.update({
+      where: { id: companyId },
+      data: updateData,
+      include: {
+        usage: true,
+      },
+    });
+
+    return updated;
+  },
+
+  async topupCompanyCredits(companyId: string, amount: number, reason?: string) {
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
+    const { addPromoCredits } = await import('../billing/usage');
+    await addPromoCredits(companyId, amount, 'TOPUP', reason || 'Admin topup');
+
+    const usage = await prisma.companyUsage.findUnique({
+      where: { companyId },
+    });
+
+    return {
+      companyId,
+      amount,
+      newBalance: usage?.promoCreditsBalance || 0,
+    };
+  },
+
+  async getCompanyUsage(companyId: string) {
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: {
+        id: true,
+        name: true,
+        plan: true,
+      },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
+    const { ensureCurrentUsagePeriod, getCompanyUsage } = await import('../billing/usage');
+    await ensureCurrentUsagePeriod(companyId);
+    const usage = await getCompanyUsage(companyId);
+
+    return {
+      company: {
+        id: company.id,
+        name: company.name,
+        plan: company.plan,
+      },
+      usage,
+    };
+  },
+
+  async runMonthlyRollover() {
+    const companies = await prisma.company.findMany({
+      select: { id: true },
+    });
+
+    const { ensureCurrentUsagePeriod } = await import('../billing/usage');
+    
+    let processed = 0;
+    let errors = 0;
+
+    for (const company of companies) {
+      try {
+        await ensureCurrentUsagePeriod(company.id);
+        processed++;
+      } catch (error) {
+        console.error(`Failed to process company ${company.id}:`, error);
+        errors++;
+      }
+    }
+
+    return {
+      processed,
+      errors,
+      total: companies.length,
+    };
   },
 };

@@ -36,6 +36,10 @@ import {
   bookingReportSchema,
   revenueReportSchema,
   companyReportSchema,
+  updateCompanyPlanSchema,
+  topupCompanyCreditsSchema,
+  getCompanyUsageSchema,
+  runMonthlyRolloverSchema,
 } from './dto';
 
 const router = Router();
@@ -91,5 +95,11 @@ router.get('/reports/users', validate(userReportSchema), adminController.getUser
 router.get('/reports/bookings', validate(bookingReportSchema), adminController.getBookingReport);
 router.get('/reports/revenue', validate(revenueReportSchema), adminController.getRevenueReport);
 router.get('/reports/companies', validate(companyReportSchema), adminController.getCompanyReport);
+
+// Billing Management
+router.patch('/companies/:id/plan', validate(updateCompanyPlanSchema), adminController.updateCompanyPlan);
+router.post('/companies/:id/credits/topup', validate(topupCompanyCreditsSchema), adminController.topupCompanyCredits);
+router.get('/companies/:id/usage', validate(getCompanyUsageSchema), adminController.getCompanyUsage);
+router.post('/billing/run-monthly-rollover', validate(runMonthlyRolloverSchema), adminController.runMonthlyRollover);
 
 export default router;

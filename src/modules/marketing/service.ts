@@ -5,6 +5,14 @@ import { createNotification } from '../../utils/notifications';
 import { BadRequestError, NotFoundError, ForbiddenError } from '../../utils/errors';
 import { config } from '../../config/env';
 import { CampaignChannel, CampaignSenderType, AudienceType } from '@prisma/client';
+import { getPlanEntitlements } from '../billing/plans';
+import { 
+  ensureCurrentUsagePeriod, 
+  incrementMarketingEmailsSent, 
+  deductPromoCredits,
+  getCompanyUsage 
+} from '../billing/usage';
+import prisma from '../../config/database';
 
 const MAX_RECIPIENTS_COMPANY = 1000;
 const MAX_RECIPIENTS_ADMIN = 10000;
@@ -339,6 +347,74 @@ export const marketingService = {
       );
     }
 
+    // Enforce plan limits for company campaigns
+    if (campaign.senderType === 'COMPANY' && campaign.senderCompanyId) {
+      const company = await prisma.company.findUnique({
+        where: { id: campaign.senderCompanyId },
+        select: { plan: true, planActive: true },
+      });
+
+      if (!company || !company.planActive) {
+        throw new ForbiddenError('Company plan is not active');
+      }
+
+      const entitlements = getPlanEntitlements(company.plan);
+      
+      // Check email limits for EMAIL campaigns
+      if (campaign.channel === 'EMAIL') {
+        await ensureCurrentUsagePeriod(campaign.senderCompanyId);
+        const usage = await getCompanyUsage(campaign.senderCompanyId);
+        
+        if (!usage) {
+          throw new BadRequestError('Usage record not found');
+        }
+
+        const currentSent = usage.marketingEmailsSent;
+        const limit = entitlements.marketingEmailMonthlyLimit;
+        
+        // FREE plan: 0 limit means no included, but allow if they have PAYG credits (we don't track PAYG separately, so allow)
+        // For other plans, enforce the limit
+        if (limit > 0 && (currentSent + recipients.length) > limit) {
+          throw new BadRequestError(
+            `Email limit exceeded. You have sent ${currentSent} emails this month. Your ${company.plan} plan allows ${limit} emails per month. Please upgrade or wait for next month.`
+          );
+        }
+        
+        // FREE plan with 0 limit: block unless they explicitly have credits (we'll allow for now, but could add PAYG tracking later)
+        if (limit === 0 && company.plan === 'FREE') {
+          throw new ForbiddenError(
+            'Email campaigns are not included in the Free plan. Upgrade to Starter plan or purchase pay-as-you-go credits.'
+          );
+        }
+      }
+
+      // Check promo credits for WHATSAPP/SMS campaigns
+      if (campaign.channel === 'WHATSAPP') {
+        await ensureCurrentUsagePeriod(campaign.senderCompanyId);
+        const usage = await getCompanyUsage(campaign.senderCompanyId);
+        
+        if (!usage) {
+          throw new BadRequestError('Usage record not found');
+        }
+
+        // FREE plan: only allow if they have credits (PAYG)
+        if (company.plan === 'FREE') {
+          if (usage.promoCreditsBalance < recipients.length) {
+            throw new ForbiddenError(
+              `Insufficient promo credits. You have ${usage.promoCreditsBalance} credits, but need ${recipients.length}. Please top up credits or upgrade to Starter plan.`
+            );
+          }
+        } else {
+          // Other plans: check if they have enough credits
+          if (usage.promoCreditsBalance < recipients.length) {
+            throw new ForbiddenError(
+              `Insufficient promo credits. You have ${usage.promoCreditsBalance} credits, but need ${recipients.length}. Please top up credits.`
+            );
+          }
+        }
+      }
+    }
+
     // Update campaign status to SENDING
     await marketingRepository.updateCampaignStatus(campaignId, 'SENDING', {
       startedAt: new Date(),
@@ -488,10 +564,33 @@ export const marketingService = {
     try {
       if (campaign.channel === 'EMAIL') {
         await this.sendEmailMessage(campaign, recipient);
+        
+        // Track email usage for company campaigns
+        if (campaign.senderType === 'COMPANY' && campaign.senderCompanyId) {
+          await incrementMarketingEmailsSent(campaign.senderCompanyId, 1).catch((err) => {
+            console.error('Failed to increment email count:', err);
+            // Don't fail the send if tracking fails
+          });
+        }
       } else if (campaign.channel === 'IN_APP') {
         await this.sendInAppMessage(campaign, recipient);
       } else if (campaign.channel === 'WHATSAPP') {
         await this.logWhatsAppMessage(campaign, recipient);
+        
+        // Deduct promo credits for company campaigns
+        if (campaign.senderType === 'COMPANY' && campaign.senderCompanyId) {
+          const deducted = await deductPromoCredits(
+            campaign.senderCompanyId,
+            1,
+            campaign.id,
+            `WhatsApp campaign: ${campaign.id}`
+          );
+          
+          if (!deducted) {
+            // This shouldn't happen as we check before sending, but handle gracefully
+            console.error(`Failed to deduct credits for campaign ${campaign.id}, recipient ${recipient.id}`);
+          }
+        }
       }
 
       // Update log status

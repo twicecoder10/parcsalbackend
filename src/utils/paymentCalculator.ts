@@ -3,7 +3,7 @@
  * 
  * Calculates booking charges including:
  * - Base amount (shipment price)
- * - Admin fee (10% of base, capped at £10)
+ * - Admin fee (commission rate from company plan, default 15%)
  * - Processing fee (grossed-up so Stripe fees are covered by the customer; configured percent + fixed fee)
  * - Total amount
  * 
@@ -21,18 +21,22 @@ export interface BookingCharges {
  * Calculate booking charges
  * 
  * @param baseAmountMinor - Base shipment price in minor units (pence)
+ * @param commissionBps - Optional commission rate in basis points (e.g., 1500 = 15.00%). Defaults to 1500 (15%)
  * @returns BookingCharges object with all amounts in minor units
  */
-export function calculateBookingCharges(baseAmountMinor: number): BookingCharges {
+export function calculateBookingCharges(baseAmountMinor: number, commissionBps: number = 1500): BookingCharges {
   if (!Number.isFinite(baseAmountMinor) || baseAmountMinor < 0) {
     throw new Error('Base amount must be a non-negative finite number');
+  }
+
+  if (!Number.isFinite(commissionBps) || commissionBps < 0 || commissionBps > 10000) {
+    throw new Error('Commission rate must be between 0 and 10000 basis points (0-100%)');
   }
 
   // -----------------------------
   // Config (minor units)
   // -----------------------------
-  const ADMIN_FEE_PERCENT = 0.10;
-  const ADMIN_FEE_CAP_MINOR = 1000; // £10
+  const COMMISSION_PERCENT = commissionBps / 10000; // Convert basis points to decimal (1500 bps = 0.15 = 15%)
 
   // Stripe processing fee estimate used for gross-up. Actual Stripe fees can vary by payment method/card.
   // Configure via env to match your Stripe account pricing.
@@ -47,12 +51,9 @@ export function calculateBookingCharges(baseAmountMinor: number): BookingCharges
   }
 
   // -----------------------------
-  // Admin fee
+  // Admin fee (commission)
   // -----------------------------
-  const adminFeeAmount = Math.min(
-    Math.round(baseAmountMinor * ADMIN_FEE_PERCENT),
-    ADMIN_FEE_CAP_MINOR
-  );
+  const adminFeeAmount = Math.round(baseAmountMinor * COMMISSION_PERCENT);
 
   // -----------------------------
   // Gross-up total so that:

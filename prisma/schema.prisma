@@ -138,6 +138,28 @@ enum CampaignChannel {
   WHATSAPP
 }
 
+enum CarrierPlan {
+  FREE
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum CompanyRankingTier {
+  STANDARD
+  PRIORITY
+  HIGHEST
+  CUSTOM
+}
+
+enum CreditTxnType {
+  TOPUP
+  GRANT
+  MONTHLY_ALLOCATION
+  SPEND
+  ADJUSTMENT
+}
+
 enum CampaignStatus {
   DRAFT
   SCHEDULED
@@ -155,45 +177,45 @@ enum AudienceType {
 }
 
 model User {
-  id                    String    @id @default(uuid())
-  email                 String    @unique
-  passwordHash          String
-  fullName              String
-  role                  UserRole  @default(CUSTOMER)
-  companyId             String?
-  company               Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  isEmailVerified       Boolean   @default(false)
-  emailVerificationToken String?  @unique
+  id                       String    @id @default(uuid())
+  email                    String    @unique
+  passwordHash             String
+  fullName                 String
+  role                     UserRole  @default(CUSTOMER)
+  companyId                String?
+  company                  Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  isEmailVerified          Boolean   @default(false)
+  emailVerificationToken   String?   @unique
   emailVerificationExpires DateTime?
-  passwordResetToken    String?   @unique
-  passwordResetExpires  DateTime?
+  passwordResetToken       String?   @unique
+  passwordResetExpires     DateTime?
   // Customer profile fields
-  phoneNumber           String?
-  city                  String?
-  address               String?
-  country               String?
-  preferredShippingMode String?   // VAN, TRUCK, AIR, TRAIN, SHIP, RIDER
-  notificationEmail     Boolean   @default(true)
-  notificationSMS       Boolean   @default(false)
-  pushToken             String?   // Expo push notification token for mobile app
-  onboardingSteps       Json?     @default("{}") // Track onboarding progress: { stepName: { completed: boolean, completedAt?: DateTime } }
-  onboardingCompleted   Boolean   @default(false)
-  restrictions          Json?     @default("{}") // Staff action restrictions: { actionName: boolean } - only for COMPANY_STAFF
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  phoneNumber              String?
+  city                     String?
+  address                  String?
+  country                  String?
+  preferredShippingMode    String? // VAN, TRUCK, AIR, TRAIN, SHIP, RIDER
+  notificationEmail        Boolean   @default(true)
+  notificationSMS          Boolean   @default(false)
+  pushToken                String? // Expo push notification token for mobile app
+  onboardingSteps          Json?     @default("{}") // Track onboarding progress: { stepName: { completed: boolean, completedAt?: DateTime } }
+  onboardingCompleted      Boolean   @default(false)
+  restrictions             Json?     @default("{}") // Staff action restrictions: { actionName: boolean } - only for COMPANY_STAFF
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
 
   // Relations
-  bookings       Booking[]
-  notifications  Notification[]
-  createdCompany Company? @relation("CompanyAdmin")
-  sentInvitations TeamInvitation[] @relation("InvitedBy")
-  acceptedInvitations TeamInvitation[] @relation("AcceptedBy")
-  reviews        Review[]
-  customerChatRooms ChatRoom[] @relation("CustomerChatRooms")
-  sentMessages    Message[]
-  createdExtraCharges BookingExtraCharge[] @relation("ExtraChargeCreator")
-  marketingConsent MarketingConsent?
-  marketingMessages MarketingMessageLog[]
+  bookings            Booking[]
+  notifications       Notification[]
+  createdCompany      Company?              @relation("CompanyAdmin")
+  sentInvitations     TeamInvitation[]      @relation("InvitedBy")
+  acceptedInvitations TeamInvitation[]      @relation("AcceptedBy")
+  reviews             Review[]
+  customerChatRooms   ChatRoom[]            @relation("CustomerChatRooms")
+  sentMessages        Message[]
+  createdExtraCharges BookingExtraCharge[]  @relation("ExtraChargeCreator")
+  marketingConsent    MarketingConsent?
+  marketingMessages   MarketingMessageLog[]
 
   @@index([email])
   @@index([companyId])
@@ -203,47 +225,56 @@ model User {
 }
 
 model Company {
-  id                  String       @id @default(uuid())
-  name                String
-  slug                String       @unique
-  description         String?
-  logoUrl             String?
-  website             String?
-  country             String
-  city                String
+  id                     String             @id @default(uuid())
+  name                   String
+  slug                   String             @unique
+  description            String?
+  logoUrl                String?
+  website                String?
+  country                String
+  city                   String
   // Company contact fields
-  contactPhone        String?
-  contactEmail        String?
-  address             String?
-  state               String?
-  postalCode          String?
-  isVerified          Boolean      @default(false)
-  activePlanId        String?
-  activePlan          CompanyPlan? @relation(fields: [activePlanId], references: [id], onDelete: SetNull)
-  planExpiresAt       DateTime?
-  adminId             String?      @unique
-  admin               User?        @relation("CompanyAdmin", fields: [adminId], references: [id], onDelete: SetNull)
-  onboardingSteps     Json?        @default("{}") // Track onboarding progress: { stepName: { completed: boolean, completedAt?: DateTime } }
-  onboardingCompleted Boolean      @default(false)
+  contactPhone           String?
+  contactEmail           String?
+  address                String?
+  state                  String?
+  postalCode             String?
+  isVerified             Boolean            @default(false)
+  activePlanId           String?
+  activePlan             CompanyPlan?       @relation(fields: [activePlanId], references: [id], onDelete: SetNull)
+  planExpiresAt          DateTime?
+  // New plan fields
+  plan                   CarrierPlan        @default(FREE)
+  planActive             Boolean            @default(true)
+  planStartedAt          DateTime?
+  planRenewsAt           DateTime?
+  commissionRateBps      Int? // Override in basis points (e.g., 1500 = 15.00%, 1200 = 12.00%)
+  rankingTier            CompanyRankingTier @default(STANDARD)
+  adminId                String?            @unique
+  admin                  User?              @relation("CompanyAdmin", fields: [adminId], references: [id], onDelete: SetNull)
+  onboardingSteps        Json?              @default("{}") // Track onboarding progress: { stepName: { completed: boolean, completedAt?: DateTime } }
+  onboardingCompleted    Boolean            @default(false)
   // Stripe Connect fields
-  stripeAccountId      String?      @unique
-  stripeOnboardingStatus String     @default("NOT_STARTED") // NOT_STARTED | IN_PROGRESS | COMPLETE
-  chargesEnabled        Boolean     @default(false)
-  payoutsEnabled        Boolean     @default(false)
-  createdAt           DateTime     @default(now())
-  updatedAt           DateTime     @updatedAt
+  stripeAccountId        String?            @unique
+  stripeOnboardingStatus String             @default("NOT_STARTED") // NOT_STARTED | IN_PROGRESS | COMPLETE
+  chargesEnabled         Boolean            @default(false)
+  payoutsEnabled         Boolean            @default(false)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
 
   // Relations
-  staff            User[]
-  shipmentSlots    ShipmentSlot[]
-  subscriptions    Subscription[]
-  bookings         Booking[]      @relation("CompanyBookings")
-  invitations      TeamInvitation[]
+  staff              User[]
+  shipmentSlots      ShipmentSlot[]
+  subscriptions      Subscription[]
+  bookings           Booking[]                  @relation("CompanyBookings")
+  invitations        TeamInvitation[]
   warehouseAddresses WarehouseAddress[]
-  reviews          Review[]
-  chatRooms        ChatRoom[]
-  payoutRequests   PayoutRequest[]
-  extraCharges     BookingExtraCharge[]
+  reviews            Review[]
+  chatRooms          ChatRoom[]
+  payoutRequests     PayoutRequest[]
+  extraCharges       BookingExtraCharge[]
+  usage              CompanyUsage?
+  creditTransactions CompanyCreditTransaction[]
 
   @@index([slug])
   @@index([isVerified])
@@ -251,48 +282,50 @@ model Company {
 }
 
 model WarehouseAddress {
-  id          String   @id @default(uuid())
-  companyId   String
-  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  name        String   // e.g., "Main Warehouse", "London Warehouse"
-  address     String
-  city        String
-  state       String?
-  country     String
-  postalCode  String?
-  isDefault   Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(uuid())
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name       String // e.g., "Main Warehouse", "London Warehouse"
+  address    String
+  city       String
+  state      String?
+  country    String
+  postalCode String?
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   // Relations
-  pickupBookings    Booking[] @relation("PickupWarehouse")
-  deliveryBookings  Booking[] @relation("DeliveryWarehouse")
+  pickupBookings   Booking[] @relation("PickupWarehouse")
+  deliveryBookings Booking[] @relation("DeliveryWarehouse")
 
   @@index([companyId])
   @@index([companyId, isDefault])
 }
 
 model CompanyPlan {
-  id                   String    @id @default(uuid())
-  name                 String    @unique // "Basic", "Pro", "Enterprise"
-  priceMonthly         Decimal   @db.Decimal(10, 2)
-  maxActiveShipmentSlots Int?    // null means unlimited
-  maxTeamMembers       Int?      // null means unlimited
-  isDefault            Boolean   @default(false)
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
+  id                     String      @id @default(uuid())
+  name                   String      @unique // "FREE", "STARTER", "PROFESSIONAL", "ENTERPRISE"
+  carrierPlan            CarrierPlan? // Link to CarrierPlan enum (optional for backward compatibility)
+  priceMonthly           Decimal     @db.Decimal(10, 2)
+  maxActiveShipmentSlots Int? // null means unlimited
+  maxTeamMembers         Int? // null means unlimited
+  isDefault              Boolean     @default(false)
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
 
   // Relations
-  companies    Company[]
+  companies     Company[]
   subscriptions Subscription[]
 
   @@index([isDefault])
+  @@index([carrierPlan])
 }
 
 model ShipmentSlot {
-  id                          String         @id @default(uuid())
+  id                          String             @id @default(uuid())
   companyId                   String
-  company                     Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company                     Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
   originCountry               String
   originCity                  String
   destinationCountry          String
@@ -305,14 +338,14 @@ model ShipmentSlot {
   remainingCapacityKg         Float?
   remainingCapacityItems      Int?
   pricingModel                PricingModel
-  pricePerKg                  Decimal?       @db.Decimal(10, 2)
-  pricePerItem                Decimal?       @db.Decimal(10, 2)
-  flatPrice                   Decimal?       @db.Decimal(10, 2)
+  pricePerKg                  Decimal?           @db.Decimal(10, 2)
+  pricePerItem                Decimal?           @db.Decimal(10, 2)
+  flatPrice                   Decimal?           @db.Decimal(10, 2)
   cutoffTimeForReceivingItems DateTime
-  status                      ShipmentStatus @default(DRAFT)
+  status                      ShipmentStatus     @default(DRAFT)
   trackingStatus              SlotTrackingStatus @default(PENDING)
-  createdAt                   DateTime       @default(now())
-  updatedAt                   DateTime       @updatedAt
+  createdAt                   DateTime           @default(now())
+  updatedAt                   DateTime           @updatedAt
 
   // Relations
   bookings Booking[]
@@ -325,70 +358,70 @@ model ShipmentSlot {
 }
 
 model Booking {
-  id                String        @id
-  shipmentSlotId    String
-  shipmentSlot      ShipmentSlot  @relation(fields: [shipmentSlotId], references: [id], onDelete: Cascade)
-  customerId        String
-  customer          User          @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  companyId         String?       // Denormalized for easier querying - nullable to preserve bookings when company is deleted
-  companyName       String?       // Denormalized company name - preserved when company is deleted for customer reference
-  company           Company?      @relation("CompanyBookings", fields: [companyId], references: [id], onDelete: SetNull)
-  requestedWeightKg Float?
-  requestedItemsCount Int?
-  calculatedPrice   Decimal       @db.Decimal(10, 2)
+  id                   String            @id
+  shipmentSlotId       String
+  shipmentSlot         ShipmentSlot      @relation(fields: [shipmentSlotId], references: [id], onDelete: Cascade)
+  customerId           String
+  customer             User              @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  companyId            String? // Denormalized for easier querying - nullable to preserve bookings when company is deleted
+  companyName          String? // Denormalized company name - preserved when company is deleted for customer reference
+  company              Company?          @relation("CompanyBookings", fields: [companyId], references: [id], onDelete: SetNull)
+  requestedWeightKg    Float?
+  requestedItemsCount  Int?
+  calculatedPrice      Decimal           @db.Decimal(10, 2)
   // Payment fee breakdown (in minor units - pence)
-  baseAmount        Int?          // Shipment price in pence
-  adminFeeAmount    Int?          // Parcsal admin fee in pence
-  processingFeeAmount Int?        // Stripe processing fee in pence
-  totalAmount       Int?          // Total amount in pence
-  status            BookingStatus @default(PENDING)
-  paymentStatus     PaymentStatus @default(PENDING)
-  notes             String?
+  baseAmount           Int? // Shipment price in pence
+  adminFeeAmount       Int? // Parcsal admin fee in pence
+  processingFeeAmount  Int? // Stripe processing fee in pence
+  totalAmount          Int? // Total amount in pence
+  status               BookingStatus     @default(PENDING)
+  paymentStatus        PaymentStatus     @default(PENDING)
+  notes                String?
   // New parcel information fields
-  parcelType        ParcelType?
-  weight            Float?        // Actual weight of the parcel (separate from requestedWeightKg for capacity)
-  value             Decimal?      @db.Decimal(10, 2) // Monetary value of the parcel
-  length            Float?        // Length in cm
-  width             Float?        // Width in cm
-  height            Float?        // Height in cm
-  description       String?
-  images            String[]      @default([]) // Array of image URLs
-  pickupMethod      PickupMethod
-  deliveryMethod    DeliveryMethod
+  parcelType           ParcelType?
+  weight               Float? // Actual weight of the parcel (separate from requestedWeightKg for capacity)
+  value                Decimal?          @db.Decimal(10, 2) // Monetary value of the parcel
+  length               Float? // Length in cm
+  width                Float? // Width in cm
+  height               Float? // Height in cm
+  description          String?
+  images               String[]          @default([]) // Array of image URLs
+  pickupMethod         PickupMethod
+  deliveryMethod       DeliveryMethod
   // Pickup address (when pickupMethod is PICKUP_FROM_SENDER)
-  pickupAddress     String?
-  pickupCity        String?
-  pickupState       String?
-  pickupCountry     String?
-  pickupPostalCode  String?
-  pickupContactName String?
-  pickupContactPhone String?
+  pickupAddress        String?
+  pickupCity           String?
+  pickupState          String?
+  pickupCountry        String?
+  pickupPostalCode     String?
+  pickupContactName    String?
+  pickupContactPhone   String?
   // Pickup warehouse reference (when pickupMethod is DROP_OFF_AT_COMPANY)
-  pickupWarehouseId String?
-  pickupWarehouse   WarehouseAddress? @relation("PickupWarehouse", fields: [pickupWarehouseId], references: [id], onDelete: SetNull)
+  pickupWarehouseId    String?
+  pickupWarehouse      WarehouseAddress? @relation("PickupWarehouse", fields: [pickupWarehouseId], references: [id], onDelete: SetNull)
   // Delivery address (when deliveryMethod is DELIVERED_TO_RECEIVER)
-  deliveryAddress     String?
-  deliveryCity        String?
-  deliveryState       String?
-  deliveryCountry     String?
-  deliveryPostalCode  String?
-  deliveryContactName String?
+  deliveryAddress      String?
+  deliveryCity         String?
+  deliveryState        String?
+  deliveryCountry      String?
+  deliveryPostalCode   String?
+  deliveryContactName  String?
   deliveryContactPhone String?
   // Delivery warehouse reference (when deliveryMethod is RECEIVER_PICKS_UP)
-  deliveryWarehouseId String?
-  deliveryWarehouse   WarehouseAddress? @relation("DeliveryWarehouse", fields: [deliveryWarehouseId], references: [id], onDelete: SetNull)
+  deliveryWarehouseId  String?
+  deliveryWarehouse    WarehouseAddress? @relation("DeliveryWarehouse", fields: [deliveryWarehouseId], references: [id], onDelete: SetNull)
   // Proof images for companies
-  pickupProofImages   String[]      @default([]) // Array of proof of pickup image URLs
-  deliveryProofImages String[]      @default([]) // Array of proof of delivery image URLs
+  pickupProofImages    String[]          @default([]) // Array of proof of pickup image URLs
+  deliveryProofImages  String[]          @default([]) // Array of proof of delivery image URLs
   // Label for printing
-  labelUrl           String?       // URL to the printable shipping label PDF
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  labelUrl             String? // URL to the printable shipping label PDF
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
 
   // Relations
-  payment Payment?
-  review  Review?
-  chatRoom ChatRoom?
+  payment      Payment?
+  review       Review?
+  chatRoom     ChatRoom?
   extraCharges BookingExtraCharge[]
 
   @@index([customerId])
@@ -398,27 +431,27 @@ model Booking {
 }
 
 model Payment {
-  id                   String                @id
-  bookingId            String                @unique
-  booking              Booking               @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  stripePaymentIntentId String               @unique
-  stripeChargeId       String?
-  amount               Decimal               @db.Decimal(10, 2)
+  id                    String                   @id
+  bookingId             String                   @unique
+  booking               Booking                  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  stripePaymentIntentId String                   @unique
+  stripeChargeId        String?
+  amount                Decimal                  @db.Decimal(10, 2)
   // Payment fee breakdown (in minor units - pence)
-  baseAmount           Int?                  // Shipment price in pence
-  adminFeeAmount       Int?                  // Parcsal admin fee in pence
-  processingFeeAmount Int?                  // Stripe processing fee in pence
-  totalAmount          Int?                  // Total amount in pence
-  currency             String                @default("gbp")
-  status               PaymentTransactionStatus @default(PENDING)
-  paymentMethod        String?               // e.g., "card", "bank_transfer"
-  refundedAmount       Decimal?              @db.Decimal(10, 2) @default(0)
-  refundReason         String?
-  paidAt               DateTime?
-  refundedAt           DateTime?
-  metadata             Json?                 @default("{}")
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
+  baseAmount            Int? // Shipment price in pence
+  adminFeeAmount        Int? // Parcsal admin fee in pence
+  processingFeeAmount   Int? // Stripe processing fee in pence
+  totalAmount           Int? // Total amount in pence
+  currency              String                   @default("gbp")
+  status                PaymentTransactionStatus @default(PENDING)
+  paymentMethod         String? // e.g., "card", "bank_transfer"
+  refundedAmount        Decimal?                 @default(0) @db.Decimal(10, 2)
+  refundReason          String?
+  paidAt                DateTime?
+  refundedAt            DateTime?
+  metadata              Json?                    @default("{}")
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
 
   @@index([stripePaymentIntentId])
   @@index([status])
@@ -427,18 +460,18 @@ model Payment {
 }
 
 model Subscription {
-  id                  String             @id @default(uuid())
-  companyId           String
-  company             Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  companyPlanId       String
-  companyPlan         CompanyPlan        @relation(fields: [companyPlanId], references: [id], onDelete: Restrict)
-  stripeCustomerId    String
-  stripeSubscriptionId String            @unique
-  status              SubscriptionStatus @default(ACTIVE)
-  currentPeriodStart  DateTime
-  currentPeriodEnd    DateTime
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
+  id                   String             @id @default(uuid())
+  companyId            String
+  company              Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyPlanId        String
+  companyPlan          CompanyPlan        @relation(fields: [companyPlanId], references: [id], onDelete: Restrict)
+  stripeCustomerId     String
+  stripeSubscriptionId String             @unique
+  status               SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart   DateTime
+  currentPeriodEnd     DateTime
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
 
   @@index([companyId])
   @@index([stripeSubscriptionId])
@@ -479,7 +512,7 @@ model TeamInvitation {
   companyId    String
   company      Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
   email        String
-  role         UserRole         // COMPANY_STAFF or COMPANY_ADMIN
+  role         UserRole // COMPANY_STAFF or COMPANY_ADMIN
   invitedById  String
   invitedBy    User             @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: Cascade)
   token        String           @unique
@@ -506,9 +539,9 @@ model Review {
   company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   customerId   String
   customer     User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  rating       Int      // 1-5 star rating
-  comment      String?  // Optional review comment
-  companyReply String?  // Optional company reply to the review
+  rating       Int // 1-5 star rating
+  comment      String? // Optional review comment
+  companyReply String? // Optional company reply to the review
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -519,16 +552,16 @@ model Review {
 }
 
 model ChatRoom {
-  id            String   @id @default(uuid())
+  id            String    @id @default(uuid())
   customerId    String
-  customer      User     @relation("CustomerChatRooms", fields: [customerId], references: [id], onDelete: Cascade)
+  customer      User      @relation("CustomerChatRooms", fields: [customerId], references: [id], onDelete: Cascade)
   companyId     String
-  company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  bookingId     String?  @unique // Optional: link to a specific booking (unique to ensure one chat room per booking)
-  booking       Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  company       Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bookingId     String?   @unique // Optional: link to a specific booking (unique to ensure one chat room per booking)
+  booking       Booking?  @relation(fields: [bookingId], references: [id], onDelete: SetNull)
   lastMessageAt DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   // Relations
   messages Message[]
@@ -541,16 +574,16 @@ model ChatRoom {
 }
 
 model Message {
-  id          String    @id @default(uuid())
-  chatRoomId  String
-  chatRoom    ChatRoom  @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
-  senderId    String
-  sender      User      @relation(fields: [senderId], references: [id], onDelete: Cascade)
-  content     String
-  isRead      Boolean   @default(false)
-  readAt      DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id         String    @id @default(uuid())
+  chatRoomId String
+  chatRoom   ChatRoom  @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
+  senderId   String
+  sender     User      @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  content    String
+  isRead     Boolean   @default(false)
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   @@index([chatRoomId, createdAt])
   @@index([senderId])
@@ -558,16 +591,16 @@ model Message {
 }
 
 model PayoutRequest {
-  id              String            @id @default(uuid())
-  companyId       String
-  company         Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  amount          Int                // Amount in minor units (pence)
-  currency        String             @default("gbp")
-  status          PayoutRequestStatus @default(REQUESTED)
-  stripePayoutId  String?            @unique
-  failureReason   String?
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  id             String              @id @default(uuid())
+  companyId      String
+  company        Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  amount         Int // Amount in minor units (pence)
+  currency       String              @default("gbp")
+  status         PayoutRequestStatus @default(REQUESTED)
+  stripePayoutId String?             @unique
+  failureReason  String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
 
   @@index([companyId])
   @@index([status])
@@ -575,29 +608,29 @@ model PayoutRequest {
 }
 
 model BookingExtraCharge {
-  id                  String   @id
-  bookingId            String
-  companyId            String
-  createdByUserId      String
-  reason               ExtraChargeReason
-  description          String?
-  evidenceUrls         String[] @default([])
-  baseAmount           Int      // minor units
-  adminFeeAmount       Int      // minor units
-  processingFeeAmount  Int      // minor units
-  totalAmount          Int      // minor units
-  status               ExtraChargeStatus @default(PENDING) // PENDING | PAID | DECLINED | EXPIRED | CANCELLED
-  stripeSessionId      String?
+  id                    String            @id
+  bookingId             String
+  companyId             String
+  createdByUserId       String
+  reason                ExtraChargeReason
+  description           String?
+  evidenceUrls          String[]          @default([])
+  baseAmount            Int // minor units
+  adminFeeAmount        Int // minor units
+  processingFeeAmount   Int // minor units
+  totalAmount           Int // minor units
+  status                ExtraChargeStatus @default(PENDING) // PENDING | PAID | DECLINED | EXPIRED | CANCELLED
+  stripeSessionId       String?
   stripePaymentIntentId String?
-  expiresAt            DateTime
-  paidAt               DateTime?
-  declinedAt           DateTime?
-  cancelledAt          DateTime?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
-  booking              Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  company              Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  createdBy            User     @relation("ExtraChargeCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  expiresAt             DateTime
+  paidAt                DateTime?
+  declinedAt            DateTime?
+  cancelledAt           DateTime?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  booking               Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  company               Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy             User              @relation("ExtraChargeCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
 
   @@index([bookingId])
   @@index([companyId])
@@ -605,54 +638,54 @@ model BookingExtraCharge {
 }
 
 model MarketingConsent {
-  id                     String  @id @default(cuid())
-  userId                 String  @unique
+  id     String @id @default(cuid())
+  userId String @unique
 
   // General Parcsal marketing (admin broadcasts)
-  emailMarketingOptIn     Boolean @default(true)
-  whatsappMarketingOptIn  Boolean @default(true)
+  emailMarketingOptIn    Boolean @default(true)
+  whatsappMarketingOptIn Boolean @default(true)
 
   // Promotions from carriers/companies
-  carrierMarketingOptIn   Boolean @default(true)
+  carrierMarketingOptIn Boolean @default(true)
 
-  updatedAt              DateTime @updatedAt
-  createdAt              DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
 
-  user                   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }
 
 model MarketingCampaign {
-  id                String            @id @default(cuid())
-  senderType        CampaignSenderType
-  senderCompanyId   String?
-  createdByUserId   String
+  id              String             @id @default(cuid())
+  senderType      CampaignSenderType
+  senderCompanyId String?
+  createdByUserId String
 
-  audienceType      AudienceType
-  channel           CampaignChannel
+  audienceType AudienceType
+  channel      CampaignChannel
 
-  subject           String?           // required for EMAIL
-  title             String?           // for IN_APP
-  contentHtml       String?           // for EMAIL
-  contentText       String?           // fallback text
-  inAppBody         String?           // for IN_APP
-  whatsappTemplateKey String?         // placeholder for future WhatsApp templates
+  subject             String? // required for EMAIL
+  title               String? // for IN_APP
+  contentHtml         String? // for EMAIL
+  contentText         String? // fallback text
+  inAppBody           String? // for IN_APP
+  whatsappTemplateKey String? // placeholder for future WhatsApp templates
 
-  status            CampaignStatus    @default(DRAFT)
-  scheduledAt       DateTime?
-  startedAt         DateTime?
-  sentAt            DateTime?
-  failureReason     String?
+  status        CampaignStatus @default(DRAFT)
+  scheduledAt   DateTime?
+  startedAt     DateTime?
+  sentAt        DateTime?
+  failureReason String?
 
-  totalRecipients   Int               @default(0)
-  deliveredCount    Int               @default(0)
-  failedCount       Int               @default(0)
+  totalRecipients Int @default(0)
+  deliveredCount  Int @default(0)
+  failedCount     Int @default(0)
 
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  messages          MarketingMessageLog[]
+  messages MarketingMessageLog[]
 
   @@index([senderType, senderCompanyId])
   @@index([status, scheduledAt])
@@ -660,22 +693,53 @@ model MarketingCampaign {
 }
 
 model MarketingMessageLog {
-  id                String         @id @default(cuid())
+  id                String          @id @default(cuid())
   campaignId        String
   recipientId       String
   channel           CampaignChannel
-  status            String         // QUEUED | SENT | DELIVERED | FAILED | SKIPPED_OPT_OUT | SKIPPED_NOT_IMPLEMENTED
+  status            String // QUEUED | SENT | DELIVERED | FAILED | SKIPPED_OPT_OUT | SKIPPED_NOT_IMPLEMENTED
   error             String?
   providerMessageId String?
 
-  createdAt         DateTime       @default(now())
-  sentAt            DateTime?
+  createdAt DateTime  @default(now())
+  sentAt    DateTime?
 
-  campaign          MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  recipient         User              @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  campaign  MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  recipient User              @relation(fields: [recipientId], references: [id], onDelete: Cascade)
 
   @@index([campaignId])
   @@index([recipientId])
   @@index([status])
 }
 
+model CompanyUsage {
+  id          String   @id @default(cuid())
+  companyId   String   @unique
+  periodStart DateTime
+  periodEnd   DateTime
+
+  marketingEmailsSent Int @default(0)
+  promoCreditsBalance Int @default(0) // SMS/WhatsApp credits balance (topups add here)
+  promoCreditsUsed    Int @default(0)
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, periodStart])
+}
+
+model CompanyCreditTransaction {
+  id          String        @id @default(cuid())
+  companyId   String
+  type        CreditTxnType
+  amount      Int // positive for add, negative for spend
+  reason      String?
+  referenceId String? // campaignId, admin adjustment, stripe invoice, etc.
+  createdAt   DateTime      @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, createdAt])
+}

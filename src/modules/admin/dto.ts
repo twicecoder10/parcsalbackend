@@ -281,3 +281,35 @@ export const companyReportSchema = z.object({
   }),
 });
 
+// Billing Management
+export const updateCompanyPlanSchema = z.object({
+  params: z.object({
+    id: z.string().uuid(),
+  }),
+  body: z.object({
+    plan: z.enum(['FREE', 'STARTER', 'PROFESSIONAL', 'ENTERPRISE']) as z.ZodTypeAny,
+    commissionRateBps: z.number().int().min(0).max(10000).optional(),
+    rankingTier: z.enum(['STANDARD', 'PRIORITY', 'HIGHEST', 'CUSTOM']).optional(),
+  }),
+});
+
+export const topupCompanyCreditsSchema = z.object({
+  params: z.object({
+    id: z.string().uuid(),
+  }),
+  body: z.object({
+    amount: z.number().int().positive(),
+    reason: z.string().optional(),
+  }),
+});
+
+export const getCompanyUsageSchema = z.object({
+  params: z.object({
+    id: z.string().uuid(),
+  }),
+});
+
+export const runMonthlyRolloverSchema = z.object({
+  query: z.object({}).optional(),
+});
+

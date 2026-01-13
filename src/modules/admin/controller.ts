@@ -464,4 +464,62 @@ export const adminController = {
       next(error);
     }
   },
+
+  // Billing Management
+  async updateCompanyPlan(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const { plan, commissionRateBps, rankingTier } = req.body;
+      const result = await adminService.updateCompanyPlan(id, {
+        plan,
+        commissionRateBps,
+        rankingTier,
+      });
+      res.status(200).json({
+        status: 'success',
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async topupCompanyCredits(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const { amount, reason } = req.body;
+      const result = await adminService.topupCompanyCredits(id, amount, reason);
+      res.status(200).json({
+        status: 'success',
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getCompanyUsage(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const usage = await adminService.getCompanyUsage(id);
+      res.status(200).json({
+        status: 'success',
+        data: usage,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async runMonthlyRollover(_req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const result = await adminService.runMonthlyRollover();
+      res.status(200).json({
+        status: 'success',
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 };
