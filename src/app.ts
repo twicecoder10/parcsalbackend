@@ -24,6 +24,7 @@ import reviewRoutes from './modules/reviews/routes';
 import chatRoutes from './modules/chat/routes';
 import connectRoutes from './modules/connect/routes';
 import extraChargeRoutes from './modules/extra-charges/routes';
+import billingRoutes from './modules/billing/routes';
 import { paymentController } from './modules/payments/controller';
 import {
   adminRouter as marketingAdminRoutes,
@@ -76,6 +77,7 @@ app.use(cors({
 app.use('/payments/webhooks/stripe', express.raw({ type: 'application/json' }));
 app.use('/webhook/stripe', express.raw({ type: 'application/json' })); // Alternative path for Stripe webhooks
 app.use('/subscriptions/webhooks/stripe-subscriptions', express.raw({ type: 'application/json' }));
+app.use('/webhooks/stripe/billing', express.raw({ type: 'application/json' }));
 
 // JSON parser for all routes except webhooks
 // Webhook routes already have raw body parser applied above
@@ -88,7 +90,8 @@ app.use((req, res, next) => {
   if (
     req.path === '/payments/webhooks/stripe' ||
     req.path === '/webhook/stripe' ||
-    req.path === '/subscriptions/webhooks/stripe-subscriptions'
+    req.path === '/subscriptions/webhooks/stripe-subscriptions' ||
+    req.path === '/webhooks/stripe/billing'
   ) {
     return next();
   }
@@ -106,7 +109,8 @@ app.use((req, res, next) => {
   if (
     req.path === '/payments/webhooks/stripe' ||
     req.path === '/webhook/stripe' ||
-    req.path === '/subscriptions/webhooks/stripe-subscriptions'
+    req.path === '/subscriptions/webhooks/stripe-subscriptions' ||
+    req.path === '/webhooks/stripe/billing'
   ) {
     return next();
   }
@@ -139,6 +143,7 @@ app.use('/payments', paymentRoutes);
 // Webhook route at root level (for Stripe webhook configuration)
 // This handles /webhook/stripe (without 's' and without /payments prefix)
 app.post('/webhook/stripe', paymentController.handleWebhook);
+app.use('/', billingRoutes); // Billing webhook routes (includes /webhooks/stripe/billing)
 app.use('/subscriptions', subscriptionRoutes);
 app.use('/admin', adminRoutes);
 app.use('/contact', contactRoutes);

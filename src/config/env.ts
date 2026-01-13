@@ -17,6 +17,9 @@ export const config = {
     publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
     webhookSubscriptionSecret: process.env.STRIPE_WEBHOOK_SUBSCRIPTION_SECRET || '',
+    priceStarterId: process.env.STRIPE_PRICE_STARTER_ID || '',
+    priceProfessionalId: process.env.STRIPE_PRICE_PROFESSIONAL_ID || '',
+    priceEnterpriseId: process.env.STRIPE_PRICE_ENTERPRISE_ID || '',
   },
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
   // Get allowed origins for CORS (supports comma-separated list or single URL)
@@ -72,6 +75,11 @@ if (config.nodeEnv === 'production') {
   if (!config.azureStorage.connectionString && 
       (!config.azureStorage.accountName || !config.azureStorage.accountKey)) {
     throw new Error('Azure Storage configuration is required in production. Please provide AZURE_STORAGE_CONNECTION_STRING or both AZURE_STORAGE_ACCOUNT_NAME and AZURE_STORAGE_ACCOUNT_KEY');
+  }
+  
+  // Validate Stripe price IDs in production
+  if (!config.stripe.priceStarterId || !config.stripe.priceProfessionalId) {
+    throw new Error('Stripe price IDs are required in production. Please provide STRIPE_PRICE_STARTER_ID and STRIPE_PRICE_PROFESSIONAL_ID');
   }
 }
 

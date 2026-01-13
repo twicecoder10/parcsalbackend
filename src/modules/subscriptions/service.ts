@@ -100,24 +100,29 @@ export const subscriptionService = {
     const baseSuccessUrl = getRedirectUrl(dto.returnUrl, '/company/subscription');
     const baseCancelUrl = getRedirectUrl(dto.returnUrl, '/company/subscription');
 
-    // Create Stripe checkout session
+    // Map plan name to Stripe price ID
+    let priceId: string | undefined;
+    const planName = plan.name.toUpperCase();
+    if (planName === 'STARTER' && config.stripe.priceStarterId) {
+      priceId = config.stripe.priceStarterId;
+    } else if (planName === 'PROFESSIONAL' && config.stripe.priceProfessionalId) {
+      priceId = config.stripe.priceProfessionalId;
+    } else if (planName === 'ENTERPRISE' && config.stripe.priceEnterpriseId) {
+      priceId = config.stripe.priceEnterpriseId;
+    }
+
+    if (!priceId) {
+      throw new BadRequestError(`No Stripe price ID configured for plan ${plan.name}. Please configure STRIPE_PRICE_${planName}_ID`);
+    }
+
+    // Create Stripe checkout session using price ID
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       mode: 'subscription',
       customer: stripeCustomerId,
       line_items: [
         {
-          price_data: {
-            currency: 'gbp',
-            product_data: {
-              name: `${plan.name} Plan`,
-              description: `Subscription for ${company.name}`,
-            },
-            recurring: {
-              interval: 'month',
-            },
-            unit_amount: Math.round(Number(plan.priceMonthly) * 100),
-          },
+          price: priceId,
           quantity: 1,
         },
       ],
@@ -125,7 +130,7 @@ export const subscriptionService = {
       cancel_url: `${baseCancelUrl}${baseCancelUrl.includes('?') ? '&' : '?'}cancelled=true${dto.fromOnboarding ? '&fromOnboarding=true' : ''}`,
       metadata: {
         companyId: company.id,
-        planId: plan.id,
+        plan: planName, // Include plan name for reference
       },
       client_reference_id: company.id,
     });

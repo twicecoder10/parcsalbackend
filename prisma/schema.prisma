@@ -225,42 +225,48 @@ model User {
 }
 
 model Company {
-  id                     String             @id @default(uuid())
-  name                   String
-  slug                   String             @unique
-  description            String?
-  logoUrl                String?
-  website                String?
-  country                String
-  city                   String
+  id                       String             @id @default(uuid())
+  name                     String
+  slug                     String             @unique
+  description              String?
+  logoUrl                  String?
+  website                  String?
+  country                  String
+  city                     String
   // Company contact fields
-  contactPhone           String?
-  contactEmail           String?
-  address                String?
-  state                  String?
-  postalCode             String?
-  isVerified             Boolean            @default(false)
-  activePlanId           String?
-  activePlan             CompanyPlan?       @relation(fields: [activePlanId], references: [id], onDelete: SetNull)
-  planExpiresAt          DateTime?
+  contactPhone             String?
+  contactEmail             String?
+  address                  String?
+  state                    String?
+  postalCode               String?
+  isVerified               Boolean            @default(false)
+  activePlanId             String?
+  activePlan               CompanyPlan?       @relation(fields: [activePlanId], references: [id], onDelete: SetNull)
+  planExpiresAt            DateTime?
   // New plan fields
-  plan                   CarrierPlan        @default(FREE)
-  planActive             Boolean            @default(true)
-  planStartedAt          DateTime?
-  planRenewsAt           DateTime?
-  commissionRateBps      Int? // Override in basis points (e.g., 1500 = 15.00%, 1200 = 12.00%)
-  rankingTier            CompanyRankingTier @default(STANDARD)
-  adminId                String?            @unique
-  admin                  User?              @relation("CompanyAdmin", fields: [adminId], references: [id], onDelete: SetNull)
-  onboardingSteps        Json?              @default("{}") // Track onboarding progress: { stepName: { completed: boolean, completedAt?: DateTime } }
-  onboardingCompleted    Boolean            @default(false)
+  plan                     CarrierPlan        @default(FREE)
+  planActive               Boolean            @default(false) // planActive means "has an active paid subscription", so FREE => false
+  planStartedAt            DateTime?
+  planRenewsAt             DateTime?
+  commissionRateBps        Int? // Override in basis points (e.g., 1500 = 15.00%, 1200 = 12.00%)
+  rankingTier              CompanyRankingTier @default(STANDARD)
+  adminId                  String?            @unique
+  admin                    User?              @relation("CompanyAdmin", fields: [adminId], references: [id], onDelete: SetNull)
+  onboardingSteps          Json?              @default("{}") // Track onboarding progress: { stepName: { completed: boolean, completedAt?: DateTime } }
+  onboardingCompleted      Boolean            @default(false)
   // Stripe Connect fields
-  stripeAccountId        String?            @unique
-  stripeOnboardingStatus String             @default("NOT_STARTED") // NOT_STARTED | IN_PROGRESS | COMPLETE
-  chargesEnabled         Boolean            @default(false)
-  payoutsEnabled         Boolean            @default(false)
-  createdAt              DateTime           @default(now())
-  updatedAt              DateTime           @updatedAt
+  stripeAccountId          String?            @unique
+  stripeOnboardingStatus   String             @default("NOT_STARTED") // NOT_STARTED | IN_PROGRESS | COMPLETE
+  chargesEnabled           Boolean            @default(false)
+  payoutsEnabled           Boolean            @default(false)
+  // Stripe Billing fields
+  stripeCustomerId         String?            @unique
+  stripeSubscriptionId     String?            @unique
+  stripeCurrentPeriodStart DateTime?
+  stripeCurrentPeriodEnd   DateTime?
+  stripeCancelAtPeriodEnd  Boolean            @default(false)
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
 
   // Relations
   staff              User[]
@@ -304,15 +310,15 @@ model WarehouseAddress {
 }
 
 model CompanyPlan {
-  id                     String      @id @default(uuid())
-  name                   String      @unique // "FREE", "STARTER", "PROFESSIONAL", "ENTERPRISE"
+  id                     String       @id @default(uuid())
+  name                   String       @unique // "FREE", "STARTER", "PROFESSIONAL", "ENTERPRISE"
   carrierPlan            CarrierPlan? // Link to CarrierPlan enum (optional for backward compatibility)
-  priceMonthly           Decimal     @db.Decimal(10, 2)
+  priceMonthly           Decimal      @db.Decimal(10, 2)
   maxActiveShipmentSlots Int? // null means unlimited
   maxTeamMembers         Int? // null means unlimited
-  isDefault              Boolean     @default(false)
-  createdAt              DateTime    @default(now())
-  updatedAt              DateTime    @updatedAt
+  isDefault              Boolean      @default(false)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
 
   // Relations
   companies     Company[]
@@ -742,4 +748,14 @@ model CompanyCreditTransaction {
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId, createdAt])
+}
+
+model StripeEvent {
+  id        String   @id // Stripe event id (evt_...)
+  type      String
+  createdAt DateTime @default(now())
+  payload   Json?
+
+  @@index([type])
+  @@index([createdAt])
 }
