@@ -29,10 +29,24 @@ export const billingWebhookController = {
       });
       
       if (!Buffer.isBuffer(payload)) {
+        let payloadPreview = '';
+        try {
+          if (typeof payload === 'string') {
+            payloadPreview = (payload as string).substring(0, 100);
+          } else if (payload !== null && payload !== undefined) {
+            const payloadStr = JSON.stringify(payload);
+            payloadPreview = payloadStr.substring(0, 100);
+          } else {
+            payloadPreview = 'null or undefined';
+          }
+        } catch (e) {
+          payloadPreview = 'Unable to stringify payload';
+        }
+        
         console.error('[Billing Webhook] Payload is not a Buffer:', {
           type: typeof payload,
           isBuffer: Buffer.isBuffer(payload),
-          payload: payload?.toString?.()?.substring(0, 100),
+          payload: payloadPreview,
         });
         return res.status(400).json({
           status: 'error',
