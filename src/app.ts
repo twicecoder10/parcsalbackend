@@ -24,8 +24,8 @@ import reviewRoutes from './modules/reviews/routes';
 import chatRoutes from './modules/chat/routes';
 import connectRoutes from './modules/connect/routes';
 import extraChargeRoutes from './modules/extra-charges/routes';
-import billingRoutes from './modules/billing/routes';
 import { paymentController } from './modules/payments/controller';
+import { billingWebhookController } from './modules/billing/webhook-controller';
 import {
   adminRouter as marketingAdminRoutes,
   companyRouter as marketingCompanyRoutes,
@@ -74,10 +74,11 @@ app.use(cors({
 
 // Apply raw body parser for Stripe webhooks (must be before JSON parser)
 // This preserves the raw body buffer needed for signature verification
+// Note: Use exact path matching to ensure raw body is preserved
 app.use('/payments/webhooks/stripe', express.raw({ type: 'application/json' }));
 app.use('/webhook/stripe', express.raw({ type: 'application/json' })); // Alternative path for Stripe webhooks
 app.use('/subscriptions/webhooks/stripe-subscriptions', express.raw({ type: 'application/json' }));
-app.use('/webhooks/stripe/billing', express.raw({ type: 'application/json' }));
+app.use('/webhooks/stripe/billing', express.raw({ type: 'application/json', limit: '10mb' }));
 
 // JSON parser for all routes except webhooks
 // Webhook routes already have raw body parser applied above
@@ -143,7 +144,9 @@ app.use('/payments', paymentRoutes);
 // Webhook route at root level (for Stripe webhook configuration)
 // This handles /webhook/stripe (without 's' and without /payments prefix)
 app.post('/webhook/stripe', paymentController.handleWebhook);
-app.use('/', billingRoutes); // Billing webhook routes (includes /webhooks/stripe/billing)
+// Billing webhook route - register directly like payment webhook to ensure raw body parsing works
+// Note: Raw body parser is already applied at line 80, but we apply it again here to be explicit
+app.post('/webhooks/stripe/billing', express.raw({ type: 'application/json', limit: '10mb' }), billingWebhookController.handleWebhook);
 app.use('/subscriptions', subscriptionRoutes);
 app.use('/admin', adminRoutes);
 app.use('/contact', contactRoutes);
