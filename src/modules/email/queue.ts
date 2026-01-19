@@ -1,10 +1,10 @@
 import { Queue, Worker, Job } from 'bullmq';
-import { redisClient } from '../../config/redis';
+import { getBullMQConnectionOptions } from '../../config/redis';
 import { emailService } from '../../config/email';
 
 // Email queue
 export const emailQueue = new Queue('emails', {
-  connection: redisClient,
+  connection: getBullMQConnectionOptions(),
   defaultJobOptions: {
     attempts: 3,
     backoff: {
@@ -203,7 +203,7 @@ export const emailWorker = new Worker(
     }
   },
   {
-    connection: redisClient,
+    connection: getBullMQConnectionOptions(),
     concurrency: 10, // Process up to 10 emails concurrently
   }
 );

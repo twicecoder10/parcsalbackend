@@ -86,6 +86,60 @@ subClient.on('error', (err: Error) => {
   }
 });
 
+// Get connection options for BullMQ (avoids type conflicts with nested ioredis dependency)
+export function getBullMQConnectionOptions() {
+  const redisUrl = process.env.REDIS_URL || process.env.REDIS_PUBLIC_URL;
+  
+  const baseOptions = {
+    maxRetriesPerRequest: null,
+    retryStrategy: (times: number) => {
+      const delay = Math.min(times * 50, 2000);
+      return delay;
+    },
+    reconnectOnError: (err: Error) => {
+      const targetError = 'READONLY';
+      if (err.message.includes(targetError)) {
+        return true;
+      }
+      return false;
+    },
+  };
+
+  if (redisUrl) {
+    const resolvedUrl = redisUrl
+      .replace(/\$\{\{REDIS_PASSWORD\}\}/g, process.env.REDIS_PASSWORD || '')
+      .replace(/\$\{\{RAILWAY_TCP_PROXY_DOMAIN\}\}/g, process.env.RAILWAY_TCP_PROXY_DOMAIN || '')
+      .replace(/\$\{\{RAILWAY_TCP_PROXY_PORT\}\}/g, process.env.RAILWAY_TCP_PROXY_PORT || '6379');
+    
+    // Parse Redis URL to extract connection options
+    try {
+      const url = new URL(resolvedUrl);
+      return {
+        host: url.hostname,
+        port: parseInt(url.port || '6379'),
+        password: url.password || undefined,
+        ...baseOptions,
+      };
+    } catch {
+      // If URL parsing fails, fall back to individual env vars
+      return {
+        host: process.env.REDIS_HOST || 'localhost',
+        port: parseInt(process.env.REDIS_PORT || '6379'),
+        password: process.env.REDIS_PASSWORD,
+        ...baseOptions,
+      };
+    }
+  }
+
+  // Return connection options object
+  return {
+    host: process.env.REDIS_HOST || 'localhost',
+    port: parseInt(process.env.REDIS_PORT || '6379'),
+    password: process.env.REDIS_PASSWORD,
+    ...baseOptions,
+  };
+}
+
 // Graceful shutdown
 export async function closeRedisConnections() {
   await Promise.all([

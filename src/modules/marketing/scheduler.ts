@@ -1,11 +1,11 @@
 import { Queue, Worker, Job } from 'bullmq';
-import { redisClient } from '../../config/redis';
+import { getBullMQConnectionOptions } from '../../config/redis';
 import { marketingService } from './service';
 import { marketingRepository } from './repository';
 
 // Campaign queue
 export const campaignQueue = new Queue('marketing-campaigns', {
-  connection: redisClient,
+  connection: getBullMQConnectionOptions(),
   defaultJobOptions: {
     attempts: 3,
     backoff: {
@@ -57,7 +57,7 @@ export const campaignWorker = new Worker(
     }
   },
   {
-    connection: redisClient,
+    connection: getBullMQConnectionOptions(),
     concurrency: 5, // Process up to 5 campaigns concurrently
   }
 );
