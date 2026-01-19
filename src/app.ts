@@ -78,7 +78,7 @@ app.use(cors({
 app.use('/payments/webhooks/stripe', express.raw({ type: 'application/json' }));
 app.use('/webhook/stripe', express.raw({ type: 'application/json' })); // Alternative path for Stripe webhooks
 app.use('/subscriptions/webhooks/stripe-subscriptions', express.raw({ type: 'application/json' }));
-app.use('/webhooks/stripe/billing', express.raw({ type: 'application/json', limit: '10mb' }));
+app.use('/webhooks/stripe/billing', express.raw({ type: 'application/json' }));
 
 // JSON parser for all routes except webhooks
 // Webhook routes already have raw body parser applied above
@@ -145,8 +145,8 @@ app.use('/payments', paymentRoutes);
 // This handles /webhook/stripe (without 's' and without /payments prefix)
 app.post('/webhook/stripe', paymentController.handleWebhook);
 // Billing webhook route - register directly like payment webhook to ensure raw body parsing works
-// Note: Raw body parser is already applied at line 80, but we apply it again here to be explicit
-app.post('/webhooks/stripe/billing', express.raw({ type: 'application/json', limit: '10mb' }), billingWebhookController.handleWebhook);
+// Note: Raw body parser is already applied at line 81 via app.use(), so we don't need to apply it again
+app.post('/webhooks/stripe/billing', billingWebhookController.handleWebhook);
 app.use('/subscriptions', subscriptionRoutes);
 app.use('/admin', adminRoutes);
 app.use('/contact', contactRoutes);

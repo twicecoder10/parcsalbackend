@@ -17,6 +17,7 @@ export const config = {
     publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
     webhookSubscriptionSecret: process.env.STRIPE_WEBHOOK_SUBSCRIPTION_SECRET || '',
+    webhookBillingSecret: process.env.STRIPE_WEBHOOK_BILLING_SECRET || process.env.STRIPE_WEBHOOK_SECRET || '', // Falls back to main webhook secret if not provided
     priceStarterId: process.env.STRIPE_PRICE_STARTER_ID || '',
     priceProfessionalId: process.env.STRIPE_PRICE_PROFESSIONAL_ID || '',
     priceEnterpriseId: process.env.STRIPE_PRICE_ENTERPRISE_ID || '',

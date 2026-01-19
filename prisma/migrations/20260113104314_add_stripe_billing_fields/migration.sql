@@ -31,11 +31,11 @@ ALTER TABLE "Company" ALTER COLUMN "planActive" SET DEFAULT false;
 DO $$ 
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'Company_stripeCustomerId_key') THEN
-        CREATE UNIQUE INDEX "Company_stripeCustomerId_key" ON "Company"("stripeCustomerId");
+CREATE UNIQUE INDEX "Company_stripeCustomerId_key" ON "Company"("stripeCustomerId");
     END IF;
-    
+
     IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'Company_stripeSubscriptionId_key') THEN
-        CREATE UNIQUE INDEX "Company_stripeSubscriptionId_key" ON "Company"("stripeSubscriptionId");
+CREATE UNIQUE INDEX "Company_stripeSubscriptionId_key" ON "Company"("stripeSubscriptionId");
     END IF;
 END $$;
 

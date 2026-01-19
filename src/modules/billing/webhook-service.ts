@@ -353,10 +353,17 @@ export async function handleBillingWebhook(payload: Buffer, signature: string): 
   let event: Stripe.Event;
 
   try {
+    // Use billing-specific webhook secret if provided, otherwise fall back to main webhook secret
+    const webhookSecret = config.stripe.webhookBillingSecret || config.stripe.webhookSecret;
+    
+    if (!webhookSecret) {
+      throw new BadRequestError('Webhook secret not configured. Please set STRIPE_WEBHOOK_BILLING_SECRET or STRIPE_WEBHOOK_SECRET');
+    }
+    
     event = stripe.webhooks.constructEvent(
       payload,
       signature,
-      config.stripe.webhookSecret
+      webhookSecret
     );
   } catch (err: any) {
     throw new BadRequestError(`Webhook signature verification failed: ${err.message}`);
