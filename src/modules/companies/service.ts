@@ -23,6 +23,51 @@ export const companyService = {
       throw new NotFoundError('Company not found');
     }
 
+    // Sync plan from active subscription if there's a mismatch
+    // Subscription is the source of truth - always sync from it
+    const { subscriptionRepository } = await import('../subscriptions/repository');
+    const activeSubscription = await subscriptionRepository.findByCompanyId(req.user.companyId);
+    
+    if (activeSubscription && activeSubscription.status === 'ACTIVE') {
+      // Check if company plan matches subscription plan
+      const subscriptionPlan = (activeSubscription as any).companyPlan?.carrierPlan;
+      const companyPlan = company.plan;
+      
+      // If mismatch, sync from subscription (subscription is source of truth)
+      if (subscriptionPlan && subscriptionPlan !== companyPlan) {
+        // Sync the plan from subscription
+        await subscriptionRepository.updateCompanyPlan(
+          req.user.companyId,
+          activeSubscription.companyPlanId,
+          activeSubscription.currentPeriodEnd
+        );
+        
+        // Refetch company to return updated data
+        const updatedCompany = await companyRepository.findById(req.user.companyId);
+        if (updatedCompany) {
+          return updatedCompany;
+        }
+      }
+    } else if (!activeSubscription && company.planActive && company.plan !== 'FREE') {
+      // No active subscription but company shows active plan - reset to FREE
+      await prisma.company.update({
+        where: { id: req.user.companyId },
+        data: {
+          plan: 'FREE',
+          planActive: false,
+          activePlanId: null,
+          planExpiresAt: null,
+          rankingTier: 'STANDARD',
+        },
+      });
+      
+      // Refetch company to return updated data
+      const updatedCompany = await companyRepository.findById(req.user.companyId);
+      if (updatedCompany) {
+        return updatedCompany;
+      }
+    }
+
     return company;
   },
 
@@ -163,6 +208,69 @@ export const companyService = {
     }
 
     const companyId = req.user.companyId;
+
+    // Get company to check plan
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: { plan: true },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
+    // FREE plan gets simplified overview stats (basic counts only, no revenue/change percentages)
+    if (company.plan === 'FREE') {
+      const [activeShipments, upcomingDepartures, totalBookings, pendingBookings, acceptedBookingsCount] = await Promise.all([
+        prisma.shipmentSlot.count({
+          where: {
+            companyId,
+            status: 'PUBLISHED',
+          },
+        }),
+        (async () => {
+          const sevenDaysFromNow = new Date();
+          sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
+          return prisma.shipmentSlot.count({
+            where: {
+              companyId,
+              status: 'PUBLISHED',
+              departureTime: {
+                gte: new Date(),
+                lte: sevenDaysFromNow,
+              },
+            },
+          });
+        })(),
+        prisma.booking.count({
+          where: { companyId },
+        }),
+        prisma.booking.count({
+          where: {
+            companyId,
+            status: 'PENDING',
+          },
+        }),
+        prisma.booking.count({
+          where: {
+            companyId,
+            status: 'ACCEPTED',
+          },
+        }),
+      ]);
+
+      return {
+        activeShipments,
+        upcomingDepartures,
+        totalBookings,
+        pendingBookings,
+        acceptedBookings: acceptedBookingsCount,
+        // FREE plan: no revenue or change percentages
+        revenue: null,
+        revenueChangePercentage: null,
+        bookingsChangePercentage: null,
+      };
+    }
 
     // Get active shipments count
     const activeShipments = await prisma.shipmentSlot.count({
@@ -796,10 +904,16 @@ export const companyService = {
       }
     }
 
-    // Remove user from company (set companyId to null)
-    await prisma.user.update({
+    // Store member info before deletion for notification
+    const memberInfo = {
+      id: member.id,
+      fullName: member.fullName,
+      email: member.email,
+    };
+
+    // Delete the user account (cascades will handle related records)
+    await prisma.user.delete({
       where: { id: memberId },
-      data: { companyId: null },
     });
 
     // Notify other company admins about removal
@@ -807,18 +921,54 @@ export const companyService = {
       req.user.companyId,
       'TEAM_MEMBER_REMOVED',
       'Team Member Removed',
-      `${member.fullName} (${member.email}) has been removed from the team`,
+      `${memberInfo.fullName} (${memberInfo.email}) has been removed from the team and their account has been deleted`,
       {
-        memberId: member.id,
-        memberName: member.fullName,
-        memberEmail: member.email,
+        memberId: memberInfo.id,
+        memberName: memberInfo.fullName,
+        memberEmail: memberInfo.email,
         removedBy: req.user.id,
       }
     ).catch((err) => {
       console.error('Failed to create team member removal notification:', err);
     });
 
-    return { message: 'Team member removed successfully' };
+    return { message: 'Team member removed and account deleted successfully' };
+  },
+
+  // Usage tracking
+  async getMyUsage(req: AuthRequest) {
+    if (!req.user || !req.user.companyId) {
+      throw new ForbiddenError('User must be associated with a company');
+    }
+
+    const { ensureCurrentUsagePeriod, getCompanyUsage } = await import('../billing/usage');
+    await ensureCurrentUsagePeriod(req.user.companyId);
+    const usage = await getCompanyUsage(req.user.companyId);
+
+    if (!usage) {
+      throw new NotFoundError('Usage record not found');
+    }
+
+    // Get plan entitlements for limits
+    const { getPlanLimits } = await import('../billing/planConfig');
+    const company = await prisma.company.findUnique({
+      where: { id: req.user.companyId },
+      select: { plan: true },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
+    const limits = getPlanLimits(company);
+
+    return {
+      ...usage,
+      limits: {
+        marketingEmailLimit: limits.marketingEmailMonthlyLimit,
+        promoCreditsIncluded: limits.monthlyPromoCreditsIncluded,
+      },
+    };
   },
 
   // Team Invitations

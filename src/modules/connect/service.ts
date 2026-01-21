@@ -16,6 +16,7 @@ import { config } from '../../config/env';
 import prisma from '../../config/database';
 import { NotFoundError, ForbiddenError, BadRequestError } from '../../utils/errors';
 import { AuthRequest } from '../../middleware/auth';
+import { onboardingRepository } from '../onboarding/repository';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -166,7 +167,7 @@ export const connectService = {
   /**
    * Create onboarding link for Express account
    */
-  async createOnboardingLink(companyId: string, returnUrl: string): Promise<string> {
+  async createOnboardingLink(companyId: string, returnUrl: string, _fromOnboarding?: boolean): Promise<string> {
     const company = await prisma.company.findUnique({
       where: { id: companyId },
     });
@@ -186,6 +187,10 @@ export const connectService = {
       type: 'account_onboarding',
     });
 
+    // If this is from onboarding, we'll mark the step as complete when payouts are enabled
+    // (handled in refreshAccountStatus)
+    // For now, we just create the link and let the status check handle completion
+
     return accountLink.url;
   },
 
@@ -195,6 +200,9 @@ export const connectService = {
   async refreshAccountStatus(companyId: string) {
     const company = await prisma.company.findUnique({
       where: { id: companyId },
+      include: {
+        admin: true,
+      },
     });
 
     if (!company) {
@@ -230,6 +238,46 @@ export const connectService = {
         payoutsEnabled: account.payouts_enabled || false,
       },
     });
+
+    // Handle payout_setup step (REQUIRED for onboarding completion - companies cannot complete onboarding without it)
+    // This step is compulsory and enforced by updateCompanyOnboardingStep which validates ALL required steps
+    if (account.payouts_enabled) {
+      try {
+        const companyOnboarding = await onboardingRepository.getCompanyOnboarding(companyId);
+        if (companyOnboarding) {
+          const payoutStep = companyOnboarding.onboardingSteps?.['payout_setup'];
+          
+          // If payouts are enabled and step is not completed, mark it complete
+          // updateCompanyOnboardingStep will automatically recalculate onboardingCompleted 
+          // based on ALL required steps, ensuring payout_setup is mandatory
+          if (!payoutStep?.completed) {
+            await onboardingRepository.updateCompanyOnboardingStep(
+              companyId,
+              'payout_setup',
+              true
+            );
+
+            // Trigger user onboarding recalculation if admin exists
+            if (company.adminId) {
+              await onboardingRepository.updateUserOnboardingStep(
+                company.adminId,
+                'profile_completion',
+                true
+              ).catch((err) => {
+                console.error('Failed to update user onboarding:', err);
+              });
+            }
+          }
+        }
+      } catch (err: any) {
+        // Log error but don't fail the request
+        console.error(`[Connect] Failed to update onboarding step:`, {
+          error: err.message,
+          stack: err.stack,
+          companyId,
+        });
+      }
+    }
 
     return {
       stripeAccountId: updated.stripeAccountId,

@@ -34,8 +34,10 @@ async function getCompanyFromAuth(req: AuthRequest) {
     throw new NotFoundError('Company not found');
   }
 
-  if (!company.planActive) {
-    throw new ForbiddenError('Company plan is not active');
+  // FREE plan can have planActive=false (it's the default)
+  // Paid plans (STARTER, PROFESSIONAL, ENTERPRISE) must have planActive=true
+  if (company.plan !== 'FREE' && !company.planActive) {
+    throw new ForbiddenError('Company plan is not active. Please activate your subscription.');
   }
 
   return company;
@@ -136,8 +138,13 @@ export async function checkTeamMemberLimit(companyId: string): Promise<void> {
     select: { plan: true, planActive: true },
   });
 
-  if (!company || !company.planActive) {
-    throw new ForbiddenError('Company plan is not active');
+  if (!company) {
+    throw new ForbiddenError('Company not found');
+  }
+
+  // FREE plan can have planActive=false, but paid plans must be active
+  if (company.plan !== 'FREE' && !company.planActive) {
+    throw new ForbiddenError('Company plan is not active. Please activate your subscription.');
   }
 
   const entitlements = getPlanEntitlements(company.plan);
@@ -174,9 +181,29 @@ export async function checkTeamMemberLimit(companyId: string): Promise<void> {
 }
 
 /**
- * Convenience middleware exports
+ * Require slot templates feature (Starter+)
  */
 export const requireSlotTemplates = requireCompanyPlanFeature('canUseSlotTemplates');
+
+/**
+ * Require advanced slot rules feature (Professional+)
+ */
 export const requireAdvancedSlotRules = requireCompanyPlanFeature('canUseAdvancedSlotRules');
-export const requireScanWarehouses = requireCompanyPlanFeature('canAccessScanWarehouses');
+
+/**
+ * Require scan module feature (Starter+)
+ */
+export const requireScanModule = requireCompanyPlanFeature('canAccessScanWarehouses');
+
+/**
+ * Require warehouses module feature (deprecated - warehouses are now available to all plans)
+ * @deprecated Warehouses are no longer restricted by plan. All plans can access warehouses.
+ */
+export const requireWarehousesModule = requireCompanyPlanFeature('canAccessScanWarehouses');
+
+/**
+ * Require team member limit (used in service layer)
+ * This is already exported as checkTeamMemberLimit above
+ */
+export const requireTeamMemberLimit = checkTeamMemberLimit;
 

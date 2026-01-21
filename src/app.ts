@@ -104,7 +104,7 @@ app.use(urlencodedParser);
 // Request logging middleware (after body parsers, before routes)
 app.use(requestLogger);
 
-// Apply general rate limiting to all routes (except webhooks and analytics)
+// Apply general rate limiting to all routes (except webhooks, analytics, onboarding, and connect)
 app.use((req, res, next) => {
   // Skip rate limiting for webhook routes (they have their own validation)
   if (
@@ -117,6 +117,14 @@ app.use((req, res, next) => {
   }
   // Skip general rate limiting for analytics routes (they have their own limiter)
   if (req.path === '/companies/analytics' || req.path.startsWith('/companies/analytics?')) {
+    return next();
+  }
+  // Skip rate limiting for onboarding routes (users may need to retry/poll frequently during setup)
+  if (req.path.startsWith('/onboarding')) {
+    return next();
+  }
+  // Skip rate limiting for Stripe Connect routes (users may need to retry/poll frequently during setup)
+  if (req.path.startsWith('/connect')) {
     return next();
   }
   generalLimiter(req, res, next);

@@ -377,9 +377,10 @@ model Booking {
   calculatedPrice      Decimal           @db.Decimal(10, 2)
   // Payment fee breakdown (in minor units - pence)
   baseAmount           Int? // Shipment price in pence
-  adminFeeAmount       Int? // Parcsal admin fee in pence
+  adminFeeAmount       Int? // Parcsal admin fee in pence (charged to customer)
   processingFeeAmount  Int? // Stripe processing fee in pence
   totalAmount          Int? // Total amount in pence
+  commissionAmount     Int? // Commission deducted from company payout (in pence) - FREE plan only
   status               BookingStatus     @default(PENDING)
   paymentStatus        PaymentStatus     @default(PENDING)
   notes                String?
@@ -445,9 +446,10 @@ model Payment {
   amount                Decimal                  @db.Decimal(10, 2)
   // Payment fee breakdown (in minor units - pence)
   baseAmount            Int? // Shipment price in pence
-  adminFeeAmount        Int? // Parcsal admin fee in pence
+  adminFeeAmount        Int? // Parcsal admin fee in pence (charged to customer)
   processingFeeAmount   Int? // Stripe processing fee in pence
   totalAmount           Int? // Total amount in pence
+  commissionAmount      Int? // Commission deducted from company payout (in pence) - FREE plan only
   currency              String                   @default("gbp")
   status                PaymentTransactionStatus @default(PENDING)
   paymentMethod         String? // e.g., "card", "bank_transfer"
@@ -624,6 +626,7 @@ model BookingExtraCharge {
   baseAmount            Int // minor units
   adminFeeAmount        Int // minor units
   processingFeeAmount   Int // minor units
+  commissionAmount      Int? // Commission deducted from company payout (in pence) - FREE plan only
   totalAmount           Int // minor units
   status                ExtraChargeStatus @default(PENDING) // PENDING | PAID | DECLINED | EXPIRED | CANCELLED
   stripeSessionId       String?
@@ -724,9 +727,12 @@ model CompanyUsage {
   periodStart DateTime
   periodEnd   DateTime
 
-  marketingEmailsSent Int @default(0)
-  promoCreditsBalance Int @default(0) // SMS/WhatsApp credits balance (topups add here)
-  promoCreditsUsed    Int @default(0)
+  shipmentsCreated      Int @default(0) // Number of shipments created this month
+  marketingEmailsSent   Int @default(0)
+  whatsappPromoSent     Int @default(0) // Number of WhatsApp promo messages sent this month
+  whatsappStoriesPosted Int @default(0) // Number of WhatsApp stories posted this month
+  promoCreditsBalance   Int @default(0) // SMS/WhatsApp credits balance (topups add here)
+  promoCreditsUsed      Int @default(0)
 
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())

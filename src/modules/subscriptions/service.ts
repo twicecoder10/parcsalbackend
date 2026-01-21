@@ -67,23 +67,6 @@ export const subscriptionService = {
       throw new NotFoundError('Company not found');
     }
 
-    // Create or retrieve Stripe customer
-    let stripeCustomerId: string;
-    const existingSubscription = await subscriptionRepository.findByCompanyId(req.user.companyId);
-
-    if (existingSubscription) {
-      stripeCustomerId = existingSubscription.stripeCustomerId;
-    } else {
-      const customer = await stripe.customers.create({
-        email: company.admin.email,
-        name: company.name,
-        metadata: {
-          companyId: company.id,
-        },
-      });
-      stripeCustomerId = customer.id;
-    }
-
     // Handle returnUrl - if it's a full URL, use it directly; otherwise prepend frontendUrl
     const getRedirectUrl = (returnUrl: string | undefined, defaultPath: string) => {
       if (!returnUrl) {
@@ -97,12 +80,101 @@ export const subscriptionService = {
       return `${config.frontendUrl}${returnUrl}`;
     };
 
-    const baseSuccessUrl = getRedirectUrl(dto.returnUrl, '/company/subscription');
+    const planName = plan.name.toUpperCase();
+    const isFreePlan = planName === 'FREE' || Number(plan.priceMonthly) === 0;
+
+    // Handle FREE plans - directly assign without Stripe checkout
+    if (isFreePlan) {
+      // Directly assign the FREE plan to the company
+      await subscriptionRepository.updateCompanyPlan(
+        req.user.companyId,
+        dto.planId,
+        null // FREE plans don't expire
+      );
+
+      // Update onboarding step if this is from onboarding flow
+      if (dto.fromOnboarding) {
+        try {
+          await onboardingRepository.updateCompanyOnboardingStep(
+            req.user.companyId,
+            'payment_setup',
+            true
+          );
+
+          // Trigger user onboarding recalculation
+          if (company.adminId) {
+            await onboardingRepository.updateUserOnboardingStep(
+              company.adminId,
+              'profile_completion',
+              true
+            ).catch((err) => {
+              console.error('Failed to update user onboarding:', err);
+            });
+          }
+        } catch (err: any) {
+          console.error(`[Free Plan Assignment] Failed to update onboarding step:`, {
+            error: err.message,
+            stack: err.stack,
+            companyId: req.user.companyId,
+          });
+        }
+      }
+
+      // Return success response with redirect URL
+      const successUrl = getRedirectUrl(dto.returnUrl, '/company/subscription');
+      const redirectUrl = `${successUrl}${successUrl.includes('?') ? '&' : '?'}success=true&plan=free${dto.fromOnboarding ? '&fromOnboarding=true' : ''}`;
+
+      return {
+        sessionId: null,
+        url: redirectUrl,
+        isFreePlan: true,
+      };
+    }
+
+    // For paid plans, create Stripe checkout session
+    // Check if this is a FREE plan user upgrading for the first time
+    const isFreePlanUpgrade = company.plan === 'FREE';
+    const existingSubscription = await subscriptionRepository.findByCompanyId(req.user.companyId);
+    const isFirstTimeUpgrade = !existingSubscription && isFreePlanUpgrade;
+
+    // Create or retrieve Stripe customer
+    let stripeCustomerId: string;
+
+    if (existingSubscription) {
+      stripeCustomerId = existingSubscription.stripeCustomerId;
+    } else {
+      // Check if company already has a stripeCustomerId
+      if (company.stripeCustomerId) {
+        stripeCustomerId = company.stripeCustomerId;
+      } else {
+        // Create new Stripe customer
+        const customer = await stripe.customers.create({
+          email: company.admin.email,
+          name: company.name,
+          metadata: {
+            companyId: company.id,
+            isFirstTimeUpgrade: String(isFirstTimeUpgrade),
+          },
+        });
+        stripeCustomerId = customer.id;
+        
+        // Save stripeCustomerId to Company immediately
+        await prisma.company.update({
+          where: { id: company.id },
+          data: { stripeCustomerId },
+        });
+      }
+    }
+
+    // For first-time upgrades from FREE plan, redirect to subscription page after success
+    // Otherwise, use the provided returnUrl
+    const baseSuccessUrl = isFirstTimeUpgrade 
+      ? `${config.frontendUrl}/company/subscription?success=true&upgraded=true`
+      : getRedirectUrl(dto.returnUrl, '/company/subscription');
     const baseCancelUrl = getRedirectUrl(dto.returnUrl, '/company/subscription');
 
     // Map plan name to Stripe price ID
     let priceId: string | undefined;
-    const planName = plan.name.toUpperCase();
     if (planName === 'STARTER' && config.stripe.priceStarterId) {
       priceId = config.stripe.priceStarterId;
     } else if (planName === 'PROFESSIONAL' && config.stripe.priceProfessionalId) {
@@ -130,14 +202,17 @@ export const subscriptionService = {
       cancel_url: `${baseCancelUrl}${baseCancelUrl.includes('?') ? '&' : '?'}cancelled=true${dto.fromOnboarding ? '&fromOnboarding=true' : ''}`,
       metadata: {
         companyId: company.id,
+        planId: dto.planId, // Include plan ID for webhook processing
         plan: planName, // Include plan name for reference
+        isFirstTimeUpgrade: String(isFirstTimeUpgrade), // Track first-time upgrades
       },
       client_reference_id: company.id,
     });
 
     return {
       sessionId: session.id,
-      url: session.url,
+      url: session.url, // This is the Stripe checkout URL - frontend should redirect to this
+      isFirstTimeUpgrade, // Return flag so frontend can handle accordingly
     };
   },
 
@@ -196,6 +271,16 @@ export const subscriptionService = {
       };
 
       const created = await subscriptionRepository.create(subscriptionData);
+      
+      // Ensure stripeCustomerId is saved to Company (if not already set)
+      await prisma.company.update({
+        where: { id: companyId },
+        data: { 
+          stripeCustomerId: customerId,
+          stripeSubscriptionId: subscriptionId,
+        },
+      });
+      
       await subscriptionRepository.updateCompanyPlan(
         companyId,
         planId,
@@ -271,85 +356,133 @@ export const subscriptionService = {
 
     // Handle subscription updated
     if (event.type === 'customer.subscription.updated') {
-      const subscription = event.data.object as Stripe.Subscription;
-      
-      const dbSubscription = await subscriptionRepository.findByStripeSubscriptionId(subscription.id);
+      try {
+        const subscription = event.data.object as Stripe.Subscription;
+        
+        const dbSubscription = await subscriptionRepository.findByStripeSubscriptionId(subscription.id);
 
-      if (dbSubscription) {
-        const newStatus = subscription.status === 'active' ? 'ACTIVE' : subscription.status === 'past_due' ? 'PAST_DUE' : 'CANCELLED';
-        
-        // Detect plan changes by checking the subscription item price
-        let newPlanId: string | null = dbSubscription.companyPlanId;
-        let planChanged = false;
-        
-        if (subscription.items?.data && subscription.items.data.length > 0) {
-          const subscriptionItem = subscription.items.data[0];
-          let priceAmount: number | null = null;
+        if (dbSubscription) {
+          const newStatus = subscription.status === 'active' ? 'ACTIVE' : subscription.status === 'past_due' ? 'PAST_DUE' : 'CANCELLED';
           
-          // Handle expanded price object (common in webhooks)
-          if (subscriptionItem.price && typeof subscriptionItem.price === 'object' && 'unit_amount' in subscriptionItem.price) {
-            const priceObj = subscriptionItem.price as Stripe.Price;
-            priceAmount = priceObj.unit_amount; // Can be null for usage-based pricing
-          } else if (subscriptionItem.price && typeof subscriptionItem.price === 'string') {
-            // Price is just an ID, need to fetch it
-            try {
-              const price = await stripe.prices.retrieve(subscriptionItem.price);
-              priceAmount = price.unit_amount;
-            } catch (err: any) {
-              console.warn(`[Subscription Webhook] Failed to retrieve price ${subscriptionItem.price}:`, err.message);
-            }
-          }
+          // Detect plan changes by checking the subscription item price
+          let newPlanId: string | null = dbSubscription.companyPlanId;
+          let planChanged = false;
           
-          if (priceAmount !== null) {
-            const detectedPlanId = await findPlanByStripePrice(priceAmount);
+          if (subscription.items?.data && subscription.items.data.length > 0) {
+            const subscriptionItem = subscription.items.data[0];
+            let priceAmount: number | null = null;
             
-            if (detectedPlanId && detectedPlanId !== dbSubscription.companyPlanId) {
-              newPlanId = detectedPlanId;
-              planChanged = true;
+            // Handle expanded price object (common in webhooks)
+            if (subscriptionItem.price && typeof subscriptionItem.price === 'object' && 'unit_amount' in subscriptionItem.price) {
+              const priceObj = subscriptionItem.price as Stripe.Price;
+              priceAmount = priceObj.unit_amount; // Can be null for usage-based pricing
+            } else if (subscriptionItem.price && typeof subscriptionItem.price === 'string') {
+              // Price is just an ID, need to fetch it
+              try {
+                const price = await stripe.prices.retrieve(subscriptionItem.price);
+                priceAmount = price.unit_amount;
+              } catch (err: any) {
+                console.warn(`[Subscription Webhook] Failed to retrieve price ${subscriptionItem.price}:`, err.message);
+              }
+            }
+            
+            if (priceAmount !== null) {
+              const detectedPlanId = await findPlanByStripePrice(priceAmount);
               
-              // Update the subscription's planId
-              await subscriptionRepository.updatePlan(dbSubscription.id, detectedPlanId);
+              if (detectedPlanId && detectedPlanId !== dbSubscription.companyPlanId) {
+                newPlanId = detectedPlanId;
+                planChanged = true;
+                
+                // Update the subscription's planId
+                await subscriptionRepository.updatePlan(dbSubscription.id, detectedPlanId);
+              }
             }
           }
-        }
-        
-        // Update subscription status and period dates
-        await subscriptionRepository.updateStatus(
-          dbSubscription.id,
-          newStatus,
-          new Date(subscription.current_period_start * 1000),
-          new Date(subscription.current_period_end * 1000)
-        );
+          
+          // Update subscription status and period dates
+          // Validate and convert period dates - Stripe timestamps are in seconds
+          // Check if timestamps exist and are valid numbers before converting
+          let validPeriodStart: Date | undefined;
+          let validPeriodEnd: Date | undefined;
 
-        // Update company's active plan and expiration date
-        if (subscription.status === 'active') {
-          await subscriptionRepository.updateCompanyPlan(
-            dbSubscription.companyId,
-            newPlanId || dbSubscription.companyPlanId,
-            new Date(subscription.current_period_end * 1000)
+          if (subscription.current_period_start != null && typeof subscription.current_period_start === 'number') {
+            const periodStart = new Date(subscription.current_period_start * 1000);
+            if (!isNaN(periodStart.getTime())) {
+              validPeriodStart = periodStart;
+            }
+          }
+
+          if (subscription.current_period_end != null && typeof subscription.current_period_end === 'number') {
+            const periodEnd = new Date(subscription.current_period_end * 1000);
+            if (!isNaN(periodEnd.getTime())) {
+              validPeriodEnd = periodEnd;
+            }
+          }
+
+          await subscriptionRepository.updateStatus(
+            dbSubscription.id,
+            newStatus,
+            validPeriodStart,
+            validPeriodEnd
           );
-        }
 
-        return { 
-          received: true, 
-          message: planChanged 
-            ? 'Subscription updated successfully with plan change' 
-            : 'Subscription updated successfully',
+          // Update company's active plan and expiration date
+          // Only update company plan if subscription is active
+          // For past_due, unpaid, or canceled, the billing webhook handles the downgrade
+          if (subscription.status === 'active') {
+            await subscriptionRepository.updateCompanyPlan(
+              dbSubscription.companyId,
+              newPlanId || dbSubscription.companyPlanId,
+              validPeriodEnd || null
+            );
+          } else if (subscription.status === 'unpaid' || (subscription.status === 'canceled' && !subscription.cancel_at_period_end)) {
+            // Explicitly handle unpaid or immediate cancellation - downgrade to FREE
+            await prisma.company.update({
+              where: { id: dbSubscription.companyId },
+              data: {
+                plan: 'FREE',
+                planActive: false,
+                activePlanId: null,
+                planExpiresAt: null,
+                rankingTier: 'STANDARD', // Reset to FREE plan's ranking tier
+              },
+            });
+          }
+
+          return { 
+            received: true, 
+            message: planChanged 
+              ? 'Subscription updated successfully with plan change' 
+              : 'Subscription updated successfully',
+            eventType: event.type,
+            subscriptionId: dbSubscription.id,
+            planChanged,
+            ...(planChanged && newPlanId ? { newPlanId } : {})
+          };
+        } else {
+          console.warn(`[Subscription Webhook] customer.subscription.updated: Subscription ${subscription.id} not found in database`);
+          // If subscription doesn't exist, it might be because checkout.session.completed hasn't been processed yet
+          // In this case, we should try to create it from the subscription data if we can find the company
+          // For now, return a message indicating it wasn't found
+          return { 
+            received: true, 
+            message: 'Subscription updated event received but subscription not found in database. It may be created when checkout.session.completed is processed.',
+            eventType: event.type,
+            subscriptionId: subscription.id
+          };
+        }
+      } catch (error: any) {
+        console.error(`[Subscription Webhook] Error processing customer.subscription.updated:`, {
+          error: error.message,
+          stack: error.stack,
+          eventId: event.id,
+          subscriptionId: (event.data.object as Stripe.Subscription)?.id,
+        });
+        return {
+          received: true,
+          message: 'Subscription event customer.subscription.updated received but processing failed',
           eventType: event.type,
-          subscriptionId: dbSubscription.id,
-          planChanged,
-          ...(planChanged && newPlanId ? { newPlanId } : {})
-        };
-      } else {
-        console.warn(`[Subscription Webhook] customer.subscription.updated: Subscription ${subscription.id} not found in database`);
-        // If subscription doesn't exist, it might be because checkout.session.completed hasn't been processed yet
-        // In this case, we should try to create it from the subscription data if we can find the company
-        // For now, return a message indicating it wasn't found
-        return { 
-          received: true, 
-          message: 'Subscription updated event received but subscription not found in database. It may be created when checkout.session.completed is processed.',
-          eventType: event.type,
-          subscriptionId: subscription.id
+          error: error.message,
         };
       }
     }
@@ -361,7 +494,17 @@ export const subscriptionService = {
 
       if (dbSubscription) {
         await subscriptionRepository.updateStatus(dbSubscription.id, 'CANCELLED');
-        await subscriptionRepository.updateCompanyPlan(dbSubscription.companyId, dbSubscription.companyPlanId, null);
+        // Set company back to FREE plan when subscription is deleted
+        await prisma.company.update({
+          where: { id: dbSubscription.companyId },
+          data: {
+            activePlanId: null,
+            planExpiresAt: null,
+            plan: 'FREE',
+            planActive: false,
+            rankingTier: 'STANDARD', // Reset to FREE plan's ranking tier
+          },
+        });
         
         return { 
           received: true, 
@@ -396,9 +539,63 @@ export const subscriptionService = {
       throw new ForbiddenError('Only company admins can view subscription details');
     }
 
+    // Get company to check plan
+    const company = await prisma.company.findUnique({
+      where: { id: req.user.companyId },
+      select: {
+        plan: true,
+        planActive: true,
+        planStartedAt: true,
+        planRenewsAt: true,
+        stripeCustomerId: true,
+        stripeSubscriptionId: true,
+      },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
+    // Check for active subscription
     const subscription = await subscriptionRepository.findByCompanyId(req.user.companyId);
     
+    // If no subscription but company is on FREE plan, return FREE plan info
     if (!subscription) {
+      if (company.plan === 'FREE') {
+        // Get FREE plan details from CompanyPlan table if it exists
+        const freePlan = await prisma.companyPlan.findFirst({
+          where: {
+            carrierPlan: 'FREE',
+          },
+        });
+
+        // Return FREE plan information in a format compatible with subscription response
+        return {
+          id: null as any,
+          companyId: req.user.companyId,
+          companyPlanId: freePlan?.id || null,
+          companyPlan: freePlan || {
+            id: 'free-plan',
+            name: 'FREE',
+            carrierPlan: 'FREE' as const,
+            priceMonthly: 0,
+            maxActiveShipmentSlots: null,
+            maxTeamMembers: 1,
+            isDefault: true,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+          stripeCustomerId: company.stripeCustomerId || null,
+          stripeSubscriptionId: null as any,
+          status: 'FREE' as any, // FREE is not a SubscriptionStatus enum value, but we'll use it for FREE plan
+          currentPeriodStart: company.planStartedAt,
+          currentPeriodEnd: company.planRenewsAt,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+      }
+      
+      // For non-FREE plans without subscription, still return plan info but indicate no active subscription
       throw new NotFoundError('No active subscription found');
     }
 
@@ -604,8 +801,26 @@ export const subscriptionService = {
       new Date(cancelledSubscription.current_period_end * 1000)
     );
 
-    // Remove active plan from company
-    await subscriptionRepository.updateCompanyPlan(req.user.companyId, subscription.companyPlanId, null);
+    // Set company back to FREE plan
+    await prisma.company.update({
+      where: { id: req.user.companyId },
+      data: {
+        activePlanId: null,
+        planExpiresAt: null,
+        plan: 'FREE',
+        planActive: false,
+      },
+    });
+    
+    // Update ranking tier to STANDARD for FREE plan
+    const { getPlanEntitlements } = await import('../billing/plans');
+    const freeEntitlements = getPlanEntitlements('FREE');
+    await prisma.company.update({
+      where: { id: req.user.companyId },
+      data: {
+        rankingTier: freeEntitlements.rankingTier,
+      },
+    });
 
     return {
       message: 'Subscription cancelled successfully',
@@ -626,14 +841,71 @@ export const subscriptionService = {
       throw new ForbiddenError('Only company admins can update payment methods');
     }
 
+    // Get company to check for Stripe customer ID
+    const company = await prisma.company.findUnique({
+      where: { id: req.user.companyId },
+      select: { stripeCustomerId: true, plan: true },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
+    // Try to get active subscription first
     const subscription = await subscriptionRepository.findByCompanyId(req.user.companyId);
-    if (!subscription) {
-      throw new NotFoundError('No active subscription found');
+    
+    // Determine Stripe customer ID - use from subscription if available, otherwise from company
+    let stripeCustomerId: string | null = null;
+    
+    if (subscription) {
+      stripeCustomerId = subscription.stripeCustomerId;
+    } else if (company.stripeCustomerId) {
+      stripeCustomerId = company.stripeCustomerId;
+    }
+
+    // If no Stripe customer ID exists, create one for the company
+    if (!stripeCustomerId) {
+      // Get company admin details for Stripe customer creation
+      const companyWithAdmin = await prisma.company.findUnique({
+        where: { id: req.user.companyId },
+        include: {
+          admin: {
+            select: {
+              email: true,
+              fullName: true,
+            },
+          },
+        },
+      });
+
+      if (!companyWithAdmin || !companyWithAdmin.admin) {
+        throw new NotFoundError('Company admin not found');
+      }
+
+      // Create Stripe customer
+      const customer = await stripe.customers.create({
+        email: companyWithAdmin.admin.email,
+        name: companyWithAdmin.admin.fullName || companyWithAdmin.name,
+        metadata: {
+          companyId: req.user.companyId,
+          plan: company.plan,
+        },
+      });
+
+      // Save Stripe customer ID to company
+      await prisma.company.update({
+        where: { id: req.user.companyId },
+        data: {
+          stripeCustomerId: customer.id,
+        },
+      });
+
+      stripeCustomerId = customer.id;
     }
 
     // Create Stripe billing portal session for payment method update
     const session = await stripe.billingPortal.sessions.create({
-      customer: subscription.stripeCustomerId,
+      customer: stripeCustomerId,
       return_url: `${config.frontendUrl}/company/subscription`,
     });
 

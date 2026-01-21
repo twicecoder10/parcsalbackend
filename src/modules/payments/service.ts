@@ -10,7 +10,6 @@ import { createNotification, createCompanyNotification } from '../../utils/notif
 import { emailService } from '../../config/email';
 import { generatePaymentId } from '../../utils/paymentId';
 import { calculateBookingCharges } from '../../utils/paymentCalculator';
-import { getEffectiveCommissionBps } from '../billing/plans';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -60,18 +59,25 @@ export const paymentService = {
       throw new BadRequestError('Payment already completed');
     }
 
-    // Get company for commission rate
+    // Get company for plan check
     const companyForCommission = booking.companyId
       ? await prisma.company.findUnique({
           where: { id: booking.companyId },
-          select: { commissionRateBps: true },
+          select: { plan: true, commissionRateBps: true },
         })
       : null;
 
-    // Calculate fees using payment calculator with company's commission rate
+    // Calculate fees - adminFeeAmount is ALWAYS 15% (charged to customer)
+    // This is separate from commission (which is only deducted from FREE plan companies)
     const baseAmountMinor = Math.round(Number(booking.calculatedPrice) * 100);
-    const commissionBps = companyForCommission ? getEffectiveCommissionBps(companyForCommission) : 1500; // Default 15% if no company
-    const charges = calculateBookingCharges(baseAmountMinor, commissionBps);
+    const ADMIN_FEE_BPS = 1500; // Always 15% admin fee charged to customer
+    const charges = calculateBookingCharges(baseAmountMinor, ADMIN_FEE_BPS);
+
+    // Calculate commission amount deducted from company payout
+    // For FREE plan: commissionAmount = adminFeeAmount (15% deducted from company)
+    // For other plans: commissionAmount = 0 (no commission, company gets full base amount)
+    const companyPlan = companyForCommission?.plan || 'FREE';
+    const commissionAmount = companyPlan === 'FREE' ? charges.adminFeeAmount : 0;
 
     // Update booking with fee breakdown
     await prisma.booking.update({
@@ -81,6 +87,7 @@ export const paymentService = {
         adminFeeAmount: charges.adminFeeAmount,
         processingFeeAmount: charges.processingFeeAmount,
         totalAmount: charges.totalAmount,
+        commissionAmount: commissionAmount,
       },
     });
 
@@ -120,28 +127,48 @@ export const paymentService = {
     // Stripe Connect (Destination charge)
     // - amount: charges.totalAmount (grossed-up total customer pays)
     // - transfer_data.destination: company Stripe account ID
-    // - transfer_data.amount: charges.baseAmount (company receives exactly the base shipment price)
-    // Platform keeps the remainder (totalAmount - baseAmount) which includes admin fee + processing fee.
+    // - transfer_data.amount: calculated based on plan:
+    //   * FREE plan: baseAmount - commissionAmount (15% deducted from company payout)
+    //   * STARTER/PROFESSIONAL: baseAmount (full amount, no commission)
+    // Platform keeps the remainder (totalAmount - transferAmount) which includes admin fee + processing fee.
     // Note: We do NOT set application_fee_amount as it conflicts with transfer_data.amount.
     const companyForStripe = booking.shipmentSlot.company;
     if (companyForStripe && (companyForStripe as any).stripeAccountId && (companyForStripe as any).chargesEnabled) {
+      // Get company plan to determine transfer amount
+      // Commission for FREE plan is deducted from company payout
+      const companyPlan = companyForCommission?.plan || 'FREE';
+      let transferAmount = charges.baseAmount;
+      
+      // For FREE plan, deduct commission from company payout
+      if (companyPlan === 'FREE') {
+        // Commission amount is already calculated in charges.adminFeeAmount
+        // Deduct it from the base amount
+        // Example: baseAmount = £49.70 (4970 pence), commission = £7.46 (746 pence)
+        // Transfer amount = 4970 - 746 = 4224 pence = £42.24
+        transferAmount = charges.baseAmount - charges.adminFeeAmount;
+      }
+      // For STARTER/PROFESSIONAL/ENTERPRISE, company gets full base amount (0% commission)
+      
       sessionParams.payment_intent_data = {
         ...sessionParams.payment_intent_data,
         // Destination charge to the connected account
         transfer_data: {
           destination: (companyForStripe as any).stripeAccountId,
-          // Send EXACTLY the base shipment amount to the company
-          amount: charges.baseAmount,
+          // Transfer amount: baseAmount minus commission (for FREE plan only)
+          amount: transferAmount,
         },
         metadata: {
           bookingId: booking.id,
           customerId: booking.customerId,
           companyId: companyForStripe.id,
+          companyPlan: companyPlan,
           // Include breakdown for debugging
           baseAmount: charges.baseAmount.toString(),
           adminFeeAmount: charges.adminFeeAmount.toString(),
           processingFeeAmount: charges.processingFeeAmount.toString(),
           totalAmount: charges.totalAmount.toString(),
+          transferAmount: transferAmount.toString(), // Amount sent to company
+          commissionAmount: commissionAmount.toString(), // Commission deducted from company payout
         },
       };
 
@@ -221,6 +248,7 @@ export const paymentService = {
     });
 
     // Create or update payment record
+    // Use try-catch to handle race conditions where multiple webhooks try to create payment simultaneously
     const existingPayment = await paymentRepository.findByBookingId(bookingId);
     if (existingPayment) {
       // Update existing payment record with fee breakdown if not already set
@@ -232,28 +260,55 @@ export const paymentService = {
           adminFeeAmount: bookingWithFees?.adminFeeAmount ?? existingPayment.adminFeeAmount,
           processingFeeAmount: bookingWithFees?.processingFeeAmount ?? existingPayment.processingFeeAmount,
           totalAmount: bookingWithFees?.totalAmount ?? existingPayment.totalAmount,
+          commissionAmount: bookingWithFees?.commissionAmount ?? existingPayment.commissionAmount,
         },
       });
       await paymentRepository.updateBookingPaymentStatus(bookingId, 'PAID');
     } else {
-      // Generate custom payment ID
-      const paymentId = await generatePaymentId();
-      
-      // Create new payment record with fee breakdown
-      const paymentData: CreatePaymentData = {
-        id: paymentId,
-        bookingId,
-        stripePaymentIntentId: paymentIntentId,
-        amount: Number(paymentIntent.amount) / 100,
-        currency: paymentIntent.currency,
-        status: 'SUCCEEDED',
-        baseAmount: bookingWithFees?.baseAmount ?? null,
-        adminFeeAmount: bookingWithFees?.adminFeeAmount ?? null,
-        processingFeeAmount: bookingWithFees?.processingFeeAmount ?? null,
-        totalAmount: bookingWithFees?.totalAmount ?? null,
-      };
-      await paymentRepository.create(paymentData);
-      await paymentRepository.updateBookingPaymentStatus(bookingId, 'PAID');
+      try {
+        // Generate custom payment ID
+        const paymentId = await generatePaymentId();
+        
+        // Create new payment record with fee breakdown
+        const paymentData: CreatePaymentData = {
+          id: paymentId,
+          bookingId,
+          stripePaymentIntentId: paymentIntentId,
+          amount: Number(paymentIntent.amount) / 100,
+          currency: paymentIntent.currency,
+          status: 'SUCCEEDED',
+          baseAmount: bookingWithFees?.baseAmount ?? null,
+          adminFeeAmount: bookingWithFees?.adminFeeAmount ?? null,
+          processingFeeAmount: bookingWithFees?.processingFeeAmount ?? null,
+          totalAmount: bookingWithFees?.totalAmount ?? null,
+          commissionAmount: bookingWithFees?.commissionAmount ?? null,
+        };
+        await paymentRepository.create(paymentData);
+        await paymentRepository.updateBookingPaymentStatus(bookingId, 'PAID');
+      } catch (error: any) {
+        // Handle race condition: if payment was created by another webhook call
+        if (error.code === 'P2002' && error.meta?.target?.includes('bookingId')) {
+          // Payment already exists (created by concurrent webhook), just update status
+          const existingPayment = await paymentRepository.findByBookingId(bookingId);
+          if (existingPayment) {
+            await prisma.payment.update({
+              where: { id: existingPayment.id },
+              data: {
+                status: 'SUCCEEDED',
+                baseAmount: bookingWithFees?.baseAmount ?? existingPayment.baseAmount,
+                adminFeeAmount: bookingWithFees?.adminFeeAmount ?? existingPayment.adminFeeAmount,
+                processingFeeAmount: bookingWithFees?.processingFeeAmount ?? existingPayment.processingFeeAmount,
+                totalAmount: bookingWithFees?.totalAmount ?? existingPayment.totalAmount,
+                commissionAmount: bookingWithFees?.commissionAmount ?? existingPayment.commissionAmount,
+              },
+            });
+            await paymentRepository.updateBookingPaymentStatus(bookingId, 'PAID');
+          }
+        } else {
+          // Re-throw if it's a different error
+          throw error;
+        }
+      }
     }
 
     // Get booking details for notifications and email
@@ -647,6 +702,16 @@ export const paymentService = {
           };
 
           const created = await subscriptionRepository.create(subscriptionData);
+          
+          // Ensure stripeCustomerId is saved to Company (if not already set)
+          await prisma.company.update({
+            where: { id: companyId },
+            data: { 
+              stripeCustomerId: customerId,
+              stripeSubscriptionId: subscriptionId,
+            },
+          });
+          
           await subscriptionRepository.updateCompanyPlan(
             companyId,
             planId,
@@ -1289,18 +1354,37 @@ export const paymentService = {
           const dbSubscription = await subscriptionRepository.findByStripeSubscriptionId(subscription.id);
           
           if (dbSubscription) {
+            // Validate and convert period dates - Stripe timestamps are in seconds
+            // Check if timestamps exist and are valid numbers before converting
+            let validPeriodStart: Date | undefined;
+            let validPeriodEnd: Date | undefined;
+
+            if (subscription.current_period_start != null && typeof subscription.current_period_start === 'number') {
+              const periodStart = new Date(subscription.current_period_start * 1000);
+              if (!isNaN(periodStart.getTime())) {
+                validPeriodStart = periodStart;
+              }
+            }
+
+            if (subscription.current_period_end != null && typeof subscription.current_period_end === 'number') {
+              const periodEnd = new Date(subscription.current_period_end * 1000);
+              if (!isNaN(periodEnd.getTime())) {
+                validPeriodEnd = periodEnd;
+              }
+            }
+
             await subscriptionRepository.updateStatus(
               dbSubscription.id,
               subscription.status === 'active' ? 'ACTIVE' : subscription.status === 'past_due' ? 'PAST_DUE' : 'CANCELLED',
-              new Date(subscription.current_period_start * 1000),
-              new Date(subscription.current_period_end * 1000)
+              validPeriodStart,
+              validPeriodEnd
             );
 
             if (subscription.status === 'active') {
               await subscriptionRepository.updateCompanyPlan(
                 dbSubscription.companyId,
                 dbSubscription.companyPlanId,
-                new Date(subscription.current_period_end * 1000)
+                validPeriodEnd || null
               );
               
               // Update onboarding if subscription becomes active
@@ -1372,6 +1456,7 @@ export const paymentService = {
       // Find company by stripeAccountId
       const company = await prisma.company.findFirst({
         where: { stripeAccountId: account.id },
+        include: { admin: true },
       });
 
       if (company) {
@@ -1381,6 +1466,35 @@ export const paymentService = {
           onboardingStatus = 'COMPLETE';
         } else if (account.details_submitted || account.charges_enabled || account.payouts_enabled) {
           onboardingStatus = 'IN_PROGRESS';
+        }
+
+        // Check for account issues/failures
+        const requirements = account.requirements;
+        const hasIssues = requirements && (
+          (requirements.currently_due && requirements.currently_due.length > 0) ||
+          (requirements.past_due && requirements.past_due.length > 0) ||
+          (requirements.pending_verification && requirements.pending_verification.length > 0)
+        );
+
+        // Log if account has issues (rejected, verification needed, etc.)
+        if (hasIssues) {
+          console.warn(`[Payment Webhook] Stripe Connect account ${account.id} has requirements/issues:`, {
+            companyId: company.id,
+            currentlyDue: requirements?.currently_due || [],
+            pastDue: requirements?.past_due || [],
+            pendingVerification: requirements?.pending_verification || [],
+            chargesEnabled: account.charges_enabled,
+            payoutsEnabled: account.payouts_enabled,
+            detailsSubmitted: account.details_submitted,
+          });
+        }
+
+        // Log if capabilities were disabled (account rejected/failed)
+        if (company.chargesEnabled && !account.charges_enabled) {
+          console.error(`[Payment Webhook] CRITICAL: Stripe Connect account ${account.id} charges were DISABLED for company ${company.id}. Account may have been rejected.`);
+        }
+        if (company.payoutsEnabled && !account.payouts_enabled) {
+          console.error(`[Payment Webhook] CRITICAL: Stripe Connect account ${account.id} payouts were DISABLED for company ${company.id}. Account may have been rejected.`);
         }
 
         // Update company status
@@ -1393,10 +1507,116 @@ export const paymentService = {
           },
         });
 
-        return { received: true, message: 'Account status updated', eventType: event.type, companyId: company.id };
+        // If payouts are enabled, mark payout_setup onboarding step as complete
+        if (account.payouts_enabled) {
+          try {
+            const { onboardingRepository } = await import('../onboarding/repository');
+            const companyOnboarding = await onboardingRepository.getCompanyOnboarding(company.id);
+            if (companyOnboarding) {
+              const payoutStep = companyOnboarding.onboardingSteps?.['payout_setup'];
+              if (!payoutStep?.completed) {
+                await onboardingRepository.updateCompanyOnboardingStep(
+                  company.id,
+                  'payout_setup',
+                  true
+                );
+
+                // Trigger user onboarding recalculation if admin exists
+                if (company.adminId) {
+                  await onboardingRepository.updateUserOnboardingStep(
+                    company.adminId,
+                    'profile_completion',
+                    true
+                  ).catch((err) => {
+                    console.error('[Payment Webhook] Failed to update user onboarding:', err);
+                  });
+                }
+              }
+            }
+          } catch (err: any) {
+            // Log error but don't fail the webhook
+            console.error(`[Payment Webhook] Failed to update onboarding step for account.updated:`, {
+              error: err.message,
+              stack: err.stack,
+              companyId: company.id,
+            });
+          }
+        }
+
+        return { 
+          received: true, 
+          message: 'Account status updated', 
+          eventType: event.type, 
+          companyId: company.id,
+          hasIssues: hasIssues || false,
+          chargesEnabled: account.charges_enabled,
+          payoutsEnabled: account.payouts_enabled,
+        };
       }
 
       return { received: true, message: 'Account updated but company not found', eventType: event.type };
+    }
+
+    // Handle Stripe Connect account.application.deauthorized event
+    // This happens when company disconnects their Stripe account from the platform
+    if (event.type === 'account.application.deauthorized') {
+      const account = event.data.object as unknown as Stripe.Account;
+      
+      // Find company by stripeAccountId
+      const company = await prisma.company.findFirst({
+        where: { stripeAccountId: account.id },
+        include: { admin: true },
+      });
+
+      if (company) {
+        console.warn(`[Payment Webhook] Stripe Connect account ${account.id} was deauthorized for company ${company.id}`);
+        
+        // Update company status - account is disconnected
+        await prisma.company.update({
+          where: { id: company.id },
+          data: {
+            chargesEnabled: false,
+            payoutsEnabled: false,
+            stripeOnboardingStatus: 'NOT_STARTED',
+            // Note: We keep stripeAccountId in case they want to reconnect
+          },
+        });
+
+        // Mark payout_setup as incomplete since account is disconnected
+        try {
+          const { onboardingRepository } = await import('../onboarding/repository');
+          await onboardingRepository.updateCompanyOnboardingStep(
+            company.id,
+            'payout_setup',
+            false
+          );
+
+          // Trigger user onboarding recalculation
+          if (company.adminId) {
+            await onboardingRepository.updateUserOnboardingStep(
+              company.adminId,
+              'profile_completion',
+              true
+            ).catch((err) => {
+              console.error('[Payment Webhook] Failed to update user onboarding:', err);
+            });
+          }
+        } catch (err: any) {
+          console.error(`[Payment Webhook] Failed to update onboarding step for account.application.deauthorized:`, {
+            error: err.message,
+            companyId: company.id,
+          });
+        }
+
+        return { 
+          received: true, 
+          message: 'Account deauthorized - Stripe Connect disconnected', 
+          eventType: event.type, 
+          companyId: company.id 
+        };
+      }
+
+      return { received: true, message: 'Account deauthorized but company not found', eventType: event.type };
     }
 
     // Handle payout.paid event
@@ -1448,7 +1668,27 @@ export const paymentService = {
 
     // Return success for unhandled events (Stripe will retry if we return error)
     // Only handle the events we care about, ignore others
-    // Unhandled event type - log as warning for monitoring
+    
+    // Events handled by billing webhook (invoice.*, billing_portal.*) - log at debug level
+    const billingWebhookEvents = [
+      'invoice.created',
+      'invoice.finalized',
+      'invoice.paid',
+      'invoice.payment_succeeded',
+      'invoice.payment_failed',
+      'invoiceitem.created',
+      'invoiceitem.updated',
+      'invoiceitem.deleted',
+      'billing_portal.session.created',
+      'customer.updated', // Usually handled by billing webhook
+    ];
+    
+    if (billingWebhookEvents.includes(event.type)) {
+      // These are handled by billing webhook - just acknowledge silently
+      return { received: true, message: `Event ${event.type} acknowledged (handled by billing webhook)`, eventType: event.type };
+    }
+    
+    // Other unhandled events - log as warning for monitoring
     console.warn(`[Payment Webhook] Unhandled event type: ${event.type}`);
     return { received: true, message: `Event ${event.type} received but not handled`, eventType: event.type };
   },
@@ -1623,6 +1863,7 @@ export const paymentService = {
       adminFeeAmount: payment.adminFeeAmount ? Number(payment.adminFeeAmount) / 100 : null,
       processingFeeAmount: payment.processingFeeAmount ? Number(payment.processingFeeAmount) / 100 : null,
       totalAmount: payment.totalAmount ? Number(payment.totalAmount) / 100 : null,
+      commissionAmount: payment.commissionAmount ? Number(payment.commissionAmount) / 100 : null,
       currency: payment.currency.toUpperCase(),
       status: payment.status,
       paymentMethod: payment.paymentMethod || 'card',
@@ -1661,6 +1902,7 @@ export const paymentService = {
       baseAmount: extraCharge.baseAmount / 100,
       adminFeeAmount: extraCharge.adminFeeAmount / 100,
       processingFeeAmount: extraCharge.processingFeeAmount / 100,
+      commissionAmount: (extraCharge as any).commissionAmount ? (extraCharge as any).commissionAmount / 100 : null,
       totalAmount: extraCharge.totalAmount / 100,
       currency: 'GBP',
       status: 'SUCCEEDED', // Extra charges in this list are always paid/succeeded
@@ -1738,6 +1980,7 @@ export const paymentService = {
         baseAmount: payment.baseAmount ? Number(payment.baseAmount) / 100 : null,
         adminFeeAmount: payment.adminFeeAmount ? Number(payment.adminFeeAmount) / 100 : null,
         processingFeeAmount: payment.processingFeeAmount ? Number(payment.processingFeeAmount) / 100 : null,
+        commissionAmount: payment.commissionAmount ? Number(payment.commissionAmount) / 100 : null,
         totalAmount: payment.totalAmount ? Number(payment.totalAmount) / 100 : null,
         currency: payment.currency.toUpperCase(),
         status: payment.status,
@@ -1811,6 +2054,7 @@ export const paymentService = {
       baseAmount: extraCharge.baseAmount / 100,
       adminFeeAmount: extraCharge.adminFeeAmount / 100,
       processingFeeAmount: extraCharge.processingFeeAmount / 100,
+      commissionAmount: (extraCharge as any).commissionAmount ? (extraCharge as any).commissionAmount / 100 : null,
       totalAmount: extraCharge.totalAmount / 100,
       currency: 'GBP',
       status: extraCharge.status === 'PAID' ? 'SUCCEEDED' : extraCharge.status,

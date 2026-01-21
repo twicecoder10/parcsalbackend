@@ -10,6 +10,8 @@ import { BookingStatus } from '@prisma/client';
 import { createShipmentCustomerNotifications } from '../../utils/notifications';
 import { emailService } from '../../config/email';
 import { checkStaffPermission } from '../../utils/permissions';
+import { getMaxShipmentsPerMonth } from '../billing/planConfig';
+import { ensureCurrentUsagePeriod, getCompanyUsage, incrementShipmentsCreated } from '../billing/usage';
 
 export const shipmentService = {
   async createShipment(req: AuthRequest, dto: CreateShipmentDto) {
@@ -34,6 +36,17 @@ export const shipmentService = {
     // if (!company.isVerified) {
     //   throw new BadRequestError('Company must be verified to create shipment slots');
     // }
+
+    // Enforce monthly shipment creation limit
+    await ensureCurrentUsagePeriod(company.id);
+    const usage = await getCompanyUsage(company.id);
+    const maxShipments = getMaxShipmentsPerMonth(company);
+    
+    if (usage && maxShipments !== Infinity && usage.shipmentsCreated >= maxShipments) {
+      throw new ForbiddenError(
+        `You've reached your monthly shipment limit. Upgrade to Starter or Professional to remove limits and pay 0% commission.`
+      );
+    }
 
     if (company.activePlan) {
       const activeCount = await shipmentRepository.countActiveByCompany(req.user.companyId);
@@ -131,6 +144,12 @@ export const shipmentService = {
     const isFirstShipment = existingCount === 0;
 
     const shipment = await shipmentRepository.create(createData);
+
+    // Increment shipment creation count
+    await incrementShipmentsCreated(company.id, 1).catch((err) => {
+      // Log error but don't fail shipment creation
+      console.error('Failed to increment shipment creation count:', err);
+    });
 
     // Mark onboarding step as complete if this is the first shipment
     if (isFirstShipment) {

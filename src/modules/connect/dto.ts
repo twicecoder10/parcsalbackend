@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const createOnboardingLinkSchema = z.object({
   body: z.object({
     returnUrl: z.string().url('Invalid return URL'),
+    fromOnboarding: z.boolean().optional(), // Flag to indicate this is part of onboarding flow
   }),
 });
 

@@ -2,7 +2,9 @@ import Stripe from 'stripe';
 import { config } from '../../config/env';
 import prisma from '../../config/database';
 import { planFromPriceId } from './stripePriceMap';
-import { BadRequestError, NotFoundError } from '../../utils/errors';
+import { BadRequestError } from '../../utils/errors';
+import { getPlanEntitlements } from './plans';
+import { CarrierPlan } from '@prisma/client';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -45,6 +47,8 @@ async function storeEvent(event: Stripe.Event): Promise<void> {
  * Determine plan active status from Stripe subscription status
  */
 function isPlanActive(status: string): boolean {
+  // Only active and trialing subscriptions are considered active
+  // past_due, unpaid, canceled, incomplete, incomplete_expired are all inactive
   return status === 'active' || status === 'trialing';
 }
 
@@ -95,17 +99,41 @@ async function updateCompanyFromSubscription(
   // Set planStartedAt only if not already set (first subscription)
   const company = await prisma.company.findUnique({
     where: { id: companyId },
-    select: { planStartedAt: true },
+    select: { planStartedAt: true, rankingTier: true },
   });
 
   if (!company?.planStartedAt && active) {
     updateData.planStartedAt = new Date();
   }
 
-  // If subscription is canceled and not at period end, set plan to FREE
+  // Auto-set ranking tier based on plan (unless Enterprise with custom override)
+  // Enterprise can have custom ranking, so only auto-set if not already CUSTOM
+  if (plan !== 'ENTERPRISE') {
+    const entitlements = getPlanEntitlements(plan as CarrierPlan);
+    updateData.rankingTier = entitlements.rankingTier;
+  } else if (plan === 'ENTERPRISE' && company?.rankingTier !== 'CUSTOM') {
+    // Enterprise defaults to CUSTOM if not already set
+    const entitlements = getPlanEntitlements('ENTERPRISE');
+    updateData.rankingTier = entitlements.rankingTier;
+  }
+  // If Enterprise already has CUSTOM, leave it as is (admin override)
+
+  // If subscription is canceled (immediate) or unpaid, downgrade to FREE
+  // Note: canceled with cancel_at_period_end=true keeps plan until period ends
   if (subscription.status === 'canceled' && !subscription.cancel_at_period_end) {
     updateData.plan = 'FREE';
     updateData.planActive = false;
+    // Reset ranking tier to STANDARD for FREE plan
+    const freeEntitlements = getPlanEntitlements('FREE');
+    updateData.rankingTier = freeEntitlements.rankingTier;
+  } else if (subscription.status === 'unpaid') {
+    // Unpaid status means payment failed after grace period - downgrade to FREE
+    updateData.plan = 'FREE';
+    updateData.planActive = false;
+    // Reset ranking tier to STANDARD for FREE plan
+    const freeEntitlements = getPlanEntitlements('FREE');
+    updateData.rankingTier = freeEntitlements.rankingTier;
+    console.log(`[Billing Webhook] Subscription ${subscription.id} is unpaid - downgrading company ${companyId} to FREE plan`);
   }
 
   // Update company
@@ -114,7 +142,7 @@ async function updateCompanyFromSubscription(
     data: updateData,
   });
 
-  console.log(`[Billing Webhook] Updated company ${companyId}: plan=${plan}, active=${active}`);
+  console.log(`[Billing Webhook] Updated company ${companyId}: plan=${plan}, active=${active}, stripeCustomerId=${updateData.stripeCustomerId || 'not set'}, stripeSubscriptionId=${updateData.stripeSubscriptionId || 'not set'}`);
 }
 
 /**
@@ -185,7 +213,18 @@ async function handleSubscriptionCreated(
     });
 
     if (!company) {
-      throw new NotFoundError(`Company not found for customer ${customerId}`);
+      // In production, this is a serious issue - company should exist
+      // In development/test, this is common with Stripe CLI test events
+      const isProduction = config.nodeEnv === 'production';
+      if (isProduction) {
+        console.error(`[Billing Webhook] CRITICAL: Company not found for customer ${customerId} in PRODUCTION. Subscription ${subscriptionId} cannot be processed.`);
+        // In production, we should still return (not throw) to prevent webhook retries
+        // but log it as an error for monitoring/alerting
+        return;
+      } else {
+        console.warn(`[Billing Webhook] Company not found for customer ${customerId}. This may be a test event. Skipping subscription update.`);
+        return;
+      }
     }
 
     companyId = company.id;
@@ -212,7 +251,13 @@ async function handleSubscriptionUpdated(event: Stripe.Event): Promise<void> {
   });
 
   if (!company) {
-    console.warn(`[Billing Webhook] Company not found for customer ${customerId}`);
+    // In production, this is a serious issue - company should exist
+    const isProduction = config.nodeEnv === 'production';
+    if (isProduction) {
+      console.error(`[Billing Webhook] CRITICAL: Company not found for customer ${customerId} in PRODUCTION. Subscription update cannot be processed.`);
+    } else {
+      console.warn(`[Billing Webhook] Company not found for customer ${customerId}. This may be a test event.`);
+    }
     return;
   }
 
@@ -237,7 +282,13 @@ async function handleSubscriptionDeleted(event: Stripe.Event): Promise<void> {
   });
 
   if (!company) {
-    console.warn(`[Billing Webhook] Company not found for customer ${customerId}`);
+    // In production, this is a serious issue - company should exist
+    const isProduction = config.nodeEnv === 'production';
+    if (isProduction) {
+      console.error(`[Billing Webhook] CRITICAL: Company not found for customer ${customerId} in PRODUCTION. Subscription update cannot be processed.`);
+    } else {
+      console.warn(`[Billing Webhook] Company not found for customer ${customerId}. This may be a test event.`);
+    }
     return;
   }
 
@@ -349,7 +400,7 @@ async function handleInvoicePaymentFailed(event: Stripe.Event): Promise<void> {
 /**
  * Main webhook handler
  */
-export async function handleBillingWebhook(payload: Buffer, signature: string): Promise<{ received: boolean; message: string; eventType?: string; companyId?: string }> {
+export async function handleBillingWebhook(payload: Buffer, signature: string): Promise<{ received: boolean; message: string; eventType?: string; companyId?: string; error?: string; warning?: string; critical?: boolean }> {
   let event: Stripe.Event;
 
   try {
@@ -360,12 +411,23 @@ export async function handleBillingWebhook(payload: Buffer, signature: string): 
       throw new BadRequestError('Webhook secret not configured. Please set STRIPE_WEBHOOK_BILLING_SECRET or STRIPE_WEBHOOK_SECRET');
     }
     
+    // Log which secret is being used (without exposing the full secret)
+    const secretPreview = webhookSecret.substring(0, 10) + '...';
+    console.log(`[Billing Webhook] Using webhook secret: ${secretPreview} (from ${config.stripe.webhookBillingSecret ? 'STRIPE_WEBHOOK_BILLING_SECRET' : 'STRIPE_WEBHOOK_SECRET'})`);
+    
     event = stripe.webhooks.constructEvent(
       payload,
       signature,
       webhookSecret
     );
   } catch (err: any) {
+    // Provide more helpful error message for signature verification failures
+    const errorMessage = err.message || 'Unknown error';
+    if (errorMessage.includes('signature') || errorMessage.includes('signing')) {
+      console.error(`[Billing Webhook] Signature verification failed. Make sure your webhook secret matches the one from Stripe CLI.`);
+      console.error(`[Billing Webhook] Current secret preview: ${(config.stripe.webhookBillingSecret || config.stripe.webhookSecret || '').substring(0, 10)}...`);
+      console.error(`[Billing Webhook] If using Stripe CLI, copy the webhook signing secret from the CLI output and set it in .env as STRIPE_WEBHOOK_BILLING_SECRET`);
+    }
     throw new BadRequestError(`Webhook signature verification failed: ${err.message}`);
   }
 
@@ -459,6 +521,29 @@ export async function handleBillingWebhook(payload: Buffer, signature: string): 
       companyId,
     };
   } catch (error: any) {
+    // Handle NotFoundError - in production this is critical, in development it's common with test events
+    if (error.name === 'NotFoundError' && error.message?.includes('Company not found')) {
+      const isProduction = config.nodeEnv === 'production';
+      if (isProduction) {
+        console.error(`[Billing Webhook] CRITICAL: ${error.message} in PRODUCTION. Event ${event.type} cannot be processed.`);
+        return {
+          received: true,
+          message: `Event ${event.type} received but company not found in PRODUCTION`,
+          eventType: event.type,
+          error: error.message,
+          critical: true,
+        };
+      } else {
+        console.warn(`[Billing Webhook] ${error.message}. This may be a test event. Skipping.`);
+        return {
+          received: true,
+          message: `Event ${event.type} received but company not found (likely a test event)`,
+          eventType: event.type,
+          warning: error.message,
+        };
+      }
+    }
+    
     console.error(`[Billing Webhook] Error processing event ${event.id}:`, {
       error: error.message,
       stack: error.stack,

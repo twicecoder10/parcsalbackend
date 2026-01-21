@@ -380,6 +380,18 @@ export const companyController = {
   },
 
   // Public endpoint to get company profile with limited info
+  async getMyUsage(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const usage = await companyService.getMyUsage(req);
+      res.status(200).json({
+        status: 'success',
+        data: usage,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async getPublicCompanyProfile(req: Request, res: Response, next: NextFunction) {
     try {
       const { companyIdOrSlug } = req.params;

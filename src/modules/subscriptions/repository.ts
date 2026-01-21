@@ -82,12 +82,53 @@ export const subscriptionRepository = {
   },
 
   async updateCompanyPlan(companyId: string, planId: string, planExpiresAt: Date | null): Promise<void> {
+    // Get the plan to determine CarrierPlan enum value
+    const plan = await prisma.companyPlan.findUnique({
+      where: { id: planId },
+      select: { carrierPlan: true },
+    });
+
+    if (!plan || !plan.carrierPlan) {
+      throw new Error(`Plan not found or carrierPlan not set for planId: ${planId}`);
+    }
+
+    // Get current company to check if planStartedAt is already set
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: { planStartedAt: true },
+    });
+
+    const updateData: any = {
+      activePlanId: planId,
+      planExpiresAt,
+      plan: plan.carrierPlan, // Update the CarrierPlan enum field
+      planActive: true, // Mark plan as active
+    };
+
+    // Only set planStartedAt if not already set (first subscription)
+    if (!company?.planStartedAt) {
+      updateData.planStartedAt = new Date();
+    }
+
+    // Update ranking tier based on plan (unless Enterprise with custom override)
+    const { getPlanEntitlements } = await import('../billing/plans');
+    const entitlements = getPlanEntitlements(plan.carrierPlan);
+    if (plan.carrierPlan !== 'ENTERPRISE') {
+      updateData.rankingTier = entitlements.rankingTier;
+    } else {
+      // For Enterprise, only set to CUSTOM if not already set
+      const currentCompany = await prisma.company.findUnique({
+        where: { id: companyId },
+        select: { rankingTier: true },
+      });
+      if (currentCompany?.rankingTier !== 'CUSTOM') {
+        updateData.rankingTier = entitlements.rankingTier;
+      }
+    }
+
     await prisma.company.update({
       where: { id: companyId },
-      data: {
-        activePlanId: planId,
-        planExpiresAt,
-      },
+      data: updateData,
     });
   },
 };

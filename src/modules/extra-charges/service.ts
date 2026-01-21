@@ -4,7 +4,6 @@ import { NotFoundError, ForbiddenError, BadRequestError } from '../../utils/erro
 import { AuthRequest } from '../../middleware/auth';
 import prisma from '../../config/database';
 import { calculateBookingCharges } from '../../utils/paymentCalculator';
-import { getEffectiveCommissionBps } from '../billing/plans';
 import Stripe from 'stripe';
 import { config } from '../../config/env';
 import { createNotification, createCompanyNotification } from '../../utils/notifications';
@@ -62,15 +61,22 @@ export const extraChargeService = {
       throw new ForbiddenError('You do not have permission to create extra charges for this booking');
     }
 
-    // Get company for commission rate
+    // Get company for plan check
     const company = await prisma.company.findUnique({
       where: { id: req.user.companyId },
-      select: { commissionRateBps: true },
+      select: { plan: true, commissionRateBps: true },
     });
 
-    // Calculate charges using the same payment calculator with company's commission rate
-    const commissionBps = company ? getEffectiveCommissionBps(company) : 1500; // Default 15%
-    const charges = calculateBookingCharges(dto.baseAmountMinor, commissionBps);
+    // Calculate charges - adminFeeAmount is ALWAYS 15% (charged to customer)
+    // This is separate from commission (which is only deducted from FREE plan companies)
+    const ADMIN_FEE_BPS = 1500; // Always 15% admin fee charged to customer
+    const charges = calculateBookingCharges(dto.baseAmountMinor, ADMIN_FEE_BPS);
+
+    // Calculate commission amount deducted from company payout
+    // For FREE plan: commissionAmount = adminFeeAmount (15% deducted from company)
+    // For other plans: commissionAmount = 0 (no commission, company gets full base amount)
+    const companyPlan = company?.plan || 'FREE';
+    const commissionAmount = companyPlan === 'FREE' ? charges.adminFeeAmount : 0;
 
     // Calculate expiration date
     const expiresAt = new Date();
@@ -91,6 +97,7 @@ export const extraChargeService = {
       baseAmount: charges.baseAmount,
       adminFeeAmount: charges.adminFeeAmount,
       processingFeeAmount: charges.processingFeeAmount,
+      commissionAmount,
       totalAmount: charges.totalAmount,
       expiresAt,
       status: 'PENDING',
@@ -217,6 +224,15 @@ export const extraChargeService = {
       throw new BadRequestError('Company payment setup is not complete. Please contact the company.');
     }
 
+    // Calculate transfer amount: baseAmount minus commission for FREE plan
+    // For FREE plan: commissionAmount is deducted from company payout
+    // For other plans: company receives full baseAmount (commissionAmount = 0)
+    // TypeScript note: commissionAmount field exists in schema - using bracket notation until types refresh
+    const commissionAmount = (extraCharge as any)['commissionAmount'] ?? 0;
+    const transferAmount = commissionAmount 
+      ? extraCharge.baseAmount - commissionAmount 
+      : extraCharge.baseAmount;
+
     // Create Stripe Checkout Session
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       payment_method_types: ['card'],
@@ -246,7 +262,7 @@ export const extraChargeService = {
       payment_intent_data: {
         transfer_data: {
           destination: extraCharge.company.stripeAccountId,
-          amount: extraCharge.baseAmount, // Company receives exactly the base amount
+          amount: transferAmount, // Company receives baseAmount minus commission (for FREE plan)
         },
         metadata: {
           bookingId,
@@ -257,7 +273,10 @@ export const extraChargeService = {
           baseAmount: extraCharge.baseAmount.toString(),
           adminFeeAmount: extraCharge.adminFeeAmount.toString(),
           processingFeeAmount: extraCharge.processingFeeAmount.toString(),
+          commissionAmount: commissionAmount.toString(),
           totalAmount: extraCharge.totalAmount.toString(),
+          transferAmount: transferAmount.toString(),
+          commissionDeducted: commissionAmount.toString(),
         },
       },
     };

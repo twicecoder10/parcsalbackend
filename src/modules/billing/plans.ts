@@ -11,6 +11,7 @@ export type AnalyticsLevel = 'BASIC' | 'ENHANCED' | 'FULL' | 'CUSTOM';
 export type PayoutSpeed = '48H' | '24_48H' | 'NEXT_DAY' | 'SLA';
 
 export interface PlanEntitlements {
+  maxShipmentsPerMonth: number; // Infinity for unlimited
   maxTeamMembers: number; // Infinity for unlimited
   rankingTier: CompanyRankingTier;
   payoutSpeed: PayoutSpeed;
@@ -20,47 +21,67 @@ export interface PlanEntitlements {
   analyticsLevel: AnalyticsLevel;
   marketingEmailMonthlyLimit: number; // 0 means no included, but pay-as-you-go allowed for FREE
   monthlyPromoCreditsIncluded: number;
+  whatsappPromoLimit: number; // Monthly included WhatsApp promo messages
+  whatsappStoryLimit: number; // Monthly WhatsApp story posts
   canRunCarrierPromoCampaigns: boolean; // FREE can only if they have PAYG credits
+  canRunEmailCampaigns: boolean; // FREE cannot run email campaigns (only PAYG promo credits)
+  commissionRate: number; // Commission rate as decimal (0.15 = 15%)
 }
 
 const PLAN_ENTITLEMENTS: Record<CarrierPlan, PlanEntitlements> = {
   FREE: {
+    maxShipmentsPerMonth: 3,
     maxTeamMembers: 1,
     rankingTier: 'STANDARD',
     payoutSpeed: '48H',
     canUseSlotTemplates: false,
     canUseAdvancedSlotRules: false,
-    canAccessScanWarehouses: false,
+    canAccessScanWarehouses: true, // Warehouses available to all plans (no enforcement)
     analyticsLevel: 'BASIC',
-    marketingEmailMonthlyLimit: 0, // No included, but PAYG credits allowed
-    monthlyPromoCreditsIncluded: 0,
+    marketingEmailMonthlyLimit: 0, // No email campaigns allowed
+    monthlyPromoCreditsIncluded: 0, // No WhatsApp credits included
+    whatsappPromoLimit: 0,
+    whatsappStoryLimit: 0,
     canRunCarrierPromoCampaigns: false, // Only via PAYG credits (checked separately)
+    canRunEmailCampaigns: false, // No email campaigns on FREE plan
+    commissionRate: 0.15, // 15% commission
   },
   STARTER: {
+    maxShipmentsPerMonth: 20,
     maxTeamMembers: 3,
-    rankingTier: 'PRIORITY',
+    rankingTier: 'STANDARD', // Changed from PRIORITY to STANDARD per requirements
     payoutSpeed: '24_48H',
     canUseSlotTemplates: true,
     canUseAdvancedSlotRules: false,
-    canAccessScanWarehouses: false,
+    canAccessScanWarehouses: true, // Access to Scan and Warehouses modules
     analyticsLevel: 'ENHANCED',
-    marketingEmailMonthlyLimit: 5000,
-    monthlyPromoCreditsIncluded: 100,
+    marketingEmailMonthlyLimit: 1000, // 1,000 emails / month
+    monthlyPromoCreditsIncluded: 0, // WhatsApp credits tracked separately
+    whatsappPromoLimit: 100, // 100 promo WhatsApp messages / month
+    whatsappStoryLimit: 20, // 20 story posts / month
     canRunCarrierPromoCampaigns: true,
+    canRunEmailCampaigns: true,
+    commissionRate: 0, // 0% commission
   },
   PROFESSIONAL: {
-    maxTeamMembers: 10,
-    rankingTier: 'HIGHEST',
+    maxShipmentsPerMonth: Infinity, // UNLIMITED
+    maxTeamMembers: Infinity, // UNLIMITED
+    rankingTier: 'PRIORITY', // Priority search ranking
     payoutSpeed: 'NEXT_DAY',
     canUseSlotTemplates: true,
     canUseAdvancedSlotRules: true,
     canAccessScanWarehouses: true,
     analyticsLevel: 'FULL',
-    marketingEmailMonthlyLimit: 20000,
-    monthlyPromoCreditsIncluded: 500,
+    marketingEmailMonthlyLimit: 5000, // 5,000 emails / month
+    monthlyPromoCreditsIncluded: 0, // WhatsApp credits tracked separately
+    whatsappPromoLimit: 250, // 250 promo WhatsApp messages / month
+    whatsappStoryLimit: 50, // 50 story posts / month
     canRunCarrierPromoCampaigns: true,
+    canRunEmailCampaigns: true,
+    commissionRate: 0, // 0% commission
   },
   ENTERPRISE: {
+    maxShipmentsPerMonth: Infinity, // Custom limits via admin override
     maxTeamMembers: Infinity,
     rankingTier: 'CUSTOM',
     payoutSpeed: 'SLA',
@@ -70,7 +91,11 @@ const PLAN_ENTITLEMENTS: Record<CarrierPlan, PlanEntitlements> = {
     analyticsLevel: 'CUSTOM',
     marketingEmailMonthlyLimit: Infinity, // Custom limit per company
     monthlyPromoCreditsIncluded: Infinity, // Custom allocation per company
+    whatsappPromoLimit: Infinity, // Custom limit
+    whatsappStoryLimit: Infinity, // Custom limit
     canRunCarrierPromoCampaigns: true,
+    canRunEmailCampaigns: true,
+    commissionRate: 0, // Default 0%, but can be overridden via commissionRateBps
   },
 };
 
@@ -84,17 +109,46 @@ export function getPlanEntitlements(plan: CarrierPlan): PlanEntitlements {
 /**
  * Get effective commission rate in basis points
  * 
- * @param company - Company with optional commissionRateBps override
+ * @param company - Company with plan and optional commissionRateBps override
  * @returns Commission rate in basis points (e.g., 1500 = 15.00%)
  */
-export function getEffectiveCommissionBps(company: { commissionRateBps?: number | null }): number {
-  // If company has a custom commission rate override, use it
+export function getEffectiveCommissionBps(company: { 
+  plan?: CarrierPlan | null;
+  commissionRateBps?: number | null;
+}): number {
+  // If company has a custom commission rate override, use it (for Enterprise)
   if (company.commissionRateBps != null) {
     return company.commissionRateBps;
   }
   
-  // Default: 15% (1500 basis points)
-  return 1500;
+  // Get commission rate from plan
+  const plan = company.plan || 'FREE';
+  const entitlements = getPlanEntitlements(plan);
+  const commissionRate = entitlements.commissionRate;
+  
+  // Convert to basis points (0.15 -> 1500)
+  return Math.round(commissionRate * 10000);
+}
+
+/**
+ * Get effective commission rate as decimal
+ * 
+ * @param company - Company with plan and optional commissionRateBps override
+ * @returns Commission rate as decimal (e.g., 0.15 = 15%)
+ */
+export function getEffectiveCommissionRate(company: { 
+  plan?: CarrierPlan | null;
+  commissionRateBps?: number | null;
+}): number {
+  // If company has a custom commission rate override, use it (for Enterprise)
+  if (company.commissionRateBps != null) {
+    return company.commissionRateBps / 10000; // Convert from basis points
+  }
+  
+  // Get commission rate from plan
+  const plan = company.plan || 'FREE';
+  const entitlements = getPlanEntitlements(plan);
+  return entitlements.commissionRate;
 }
 
 /**

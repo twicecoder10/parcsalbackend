@@ -3,6 +3,7 @@ import { companyController } from './controller';
 import { authenticate, requireCompanyAccess } from '../../middleware/auth';
 import { validate } from '../../middleware/validator';
 import { analyticsLimiter } from '../../middleware/rateLimiter';
+import { requirePlan } from '../../middleware/entitlements';
 import { updateCompanySchema, completeCompanyOnboardingSchema, createWarehouseAddressSchema, updateWarehouseAddressSchema, deleteWarehouseAddressSchema, getCompanyWarehousesSchema, getPublicCompanyProfileSchema, getCompanyShipmentsSchema, browseCompaniesSchema, staffRestrictionsSchema } from './dto';
 
 const router = Router();
@@ -53,11 +54,12 @@ router.get(
   companyController.getUpcomingShipments
 );
 
-// Analytics
+// Analytics (STARTER+ plans only - FREE plan does not have access)
 router.get(
   '/analytics',
   authenticate,
   requireCompanyAccess,
+  requirePlan('STARTER'), // Analytics only available for STARTER and above
   analyticsLimiter,
   companyController.getAnalytics
 );
@@ -98,6 +100,14 @@ router.delete(
   authenticate,
   requireCompanyAccess,
   companyController.removeTeamMember
+);
+
+// Company Usage
+router.get(
+  '/me/usage',
+  authenticate,
+  requireCompanyAccess,
+  companyController.getMyUsage
 );
 
 // Company Settings
@@ -182,7 +192,7 @@ router.post(
   companyController.revokeInvitation
 );
 
-// Warehouse Addresses
+// Warehouse Addresses (Available to all plans)
 router.post(
   '/warehouses',
   authenticate,

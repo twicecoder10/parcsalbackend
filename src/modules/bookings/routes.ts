@@ -3,6 +3,7 @@ import { bookingController } from './controller';
 import { authenticate, requireCompanyAccess, requireRole } from '../../middleware/auth';
 import { validate } from '../../middleware/validator';
 import { bookingLimiter } from '../../middleware/rateLimiter';
+import { requireScanModule } from '../../middleware/entitlements';
 import {
   createBookingSchema,
   updateBookingStatusSchema,
@@ -165,20 +166,22 @@ router.post(
   bookingController.regenerateBookingLabel
 );
 
-// Company route - Scan barcode
+// Company route - Scan barcode (Professional+)
 router.post(
   '/scan',
   authenticate,
   requireCompanyAccess,
+  requireScanModule,
   validate(scanBarcodeSchema),
   bookingController.scanBarcode
 );
 
-// Company route - Scan barcode (alternative path)
+// Company route - Scan barcode (alternative path) (Professional+)
 router.post(
   '/company/scan',
   authenticate,
   requireCompanyAccess,
+  requireScanModule,
   validate(scanBarcodeSchema),
   bookingController.scanBarcode
 );

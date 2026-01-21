@@ -12,6 +12,7 @@ export interface CreatePaymentData {
   adminFeeAmount?: number | null;
   processingFeeAmount?: number | null;
   totalAmount?: number | null;
+  commissionAmount?: number | null;
 }
 
 export const paymentRepository = {
@@ -28,6 +29,7 @@ export const paymentRepository = {
         adminFeeAmount: data.adminFeeAmount,
         processingFeeAmount: data.processingFeeAmount,
         totalAmount: data.totalAmount,
+        commissionAmount: data.commissionAmount,
       },
       include: {
         booking: {

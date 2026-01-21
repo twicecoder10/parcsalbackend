@@ -3,7 +3,7 @@
  * 
  * Calculates booking charges including:
  * - Base amount (shipment price)
- * - Admin fee (commission rate from company plan, default 15%)
+ * - Admin fee (15% of base amount, capped at £10)
  * - Processing fee (grossed-up so Stripe fees are covered by the customer; configured percent + fixed fee)
  * - Total amount
  * 
@@ -51,9 +51,11 @@ export function calculateBookingCharges(baseAmountMinor: number, commissionBps: 
   }
 
   // -----------------------------
-  // Admin fee (commission)
+  // Admin fee (commission) - capped at £10 (1000 pence)
   // -----------------------------
-  const adminFeeAmount = Math.round(baseAmountMinor * COMMISSION_PERCENT);
+  const ADMIN_FEE_CAP_MINOR = 1000; // £10 cap in minor units (pence)
+  const calculatedAdminFee = Math.round(baseAmountMinor * COMMISSION_PERCENT);
+  const adminFeeAmount = Math.min(calculatedAdminFee, ADMIN_FEE_CAP_MINOR);
 
   // -----------------------------
   // Gross-up total so that:

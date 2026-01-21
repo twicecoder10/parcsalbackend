@@ -5,10 +5,17 @@ import { createNotification } from '../../utils/notifications';
 import { BadRequestError, NotFoundError, ForbiddenError } from '../../utils/errors';
 import { config } from '../../config/env';
 import { CampaignChannel, CampaignSenderType, AudienceType } from '@prisma/client';
-import { getPlanEntitlements } from '../billing/plans';
+import { 
+  getMarketingEmailLimit,
+  getWhatsappPromoLimit,
+  getWhatsappStoryLimit,
+  canRunEmailCampaigns
+} from '../billing/planConfig';
 import { 
   ensureCurrentUsagePeriod, 
   incrementMarketingEmailsSent, 
+  incrementWhatsappPromoSent,
+  incrementWhatsappStoriesPosted,
   deductPromoCredits,
   getCompanyUsage 
 } from '../billing/usage';
@@ -354,14 +361,24 @@ export const marketingService = {
         select: { plan: true, planActive: true },
       });
 
-      if (!company || !company.planActive) {
-        throw new ForbiddenError('Company plan is not active');
+      if (!company) {
+        throw new ForbiddenError('Company not found');
       }
 
-      const entitlements = getPlanEntitlements(company.plan);
+      // FREE plan can have planActive=false, but paid plans must be active
+      if (company.plan !== 'FREE' && !company.planActive) {
+        throw new ForbiddenError('Company plan is not active. Please activate your subscription.');
+      }
       
       // Check email limits for EMAIL campaigns
       if (campaign.channel === 'EMAIL') {
+        // FREE plan cannot run email campaigns
+        if (!canRunEmailCampaigns(company)) {
+          throw new ForbiddenError(
+            'Email campaigns are not included in the Free plan. Upgrade to Starter plan to access email marketing.'
+          );
+        }
+        
         await ensureCurrentUsagePeriod(campaign.senderCompanyId);
         const usage = await getCompanyUsage(campaign.senderCompanyId);
         
@@ -370,25 +387,17 @@ export const marketingService = {
         }
 
         const currentSent = usage.marketingEmailsSent;
-        const limit = entitlements.marketingEmailMonthlyLimit;
+        const limit = getMarketingEmailLimit(company);
         
-        // FREE plan: 0 limit means no included, but allow if they have PAYG credits (we don't track PAYG separately, so allow)
-        // For other plans, enforce the limit
-        if (limit > 0 && (currentSent + recipients.length) > limit) {
-          throw new BadRequestError(
-            `Email limit exceeded. You have sent ${currentSent} emails this month. Your ${company.plan} plan allows ${limit} emails per month. Please upgrade or wait for next month.`
-          );
-        }
-        
-        // FREE plan with 0 limit: block unless they explicitly have credits (we'll allow for now, but could add PAYG tracking later)
-        if (limit === 0 && company.plan === 'FREE') {
+        // Enforce the limit (limit can be Infinity for Enterprise)
+        if (limit !== Infinity && (currentSent + recipients.length) > limit) {
           throw new ForbiddenError(
-            'Email campaigns are not included in the Free plan. Upgrade to Starter plan or purchase pay-as-you-go credits.'
+            `Email limit exceeded. You have sent ${currentSent} emails this month. Your ${company.plan} plan allows ${limit} emails per month. Please upgrade or wait for next month.`
           );
         }
       }
 
-      // Check promo credits for WHATSAPP/SMS campaigns
+      // Check promo credits and limits for WHATSAPP campaigns
       if (campaign.channel === 'WHATSAPP') {
         await ensureCurrentUsagePeriod(campaign.senderCompanyId);
         const usage = await getCompanyUsage(campaign.senderCompanyId);
@@ -397,19 +406,48 @@ export const marketingService = {
           throw new BadRequestError('Usage record not found');
         }
 
-        // FREE plan: only allow if they have credits (PAYG)
-        if (company.plan === 'FREE') {
-          if (usage.promoCreditsBalance < recipients.length) {
+        // Determine if this is a story or promo message (for now, treat all as promo unless specified)
+        // TODO: Add campaign metadata field to distinguish story vs promo
+        const isStory = false; // Default to promo message
+        
+        if (isStory) {
+          // WhatsApp story limit check
+          const storyLimit = getWhatsappStoryLimit(company);
+          const currentStories = usage.whatsappStoriesPosted;
+          
+          if (storyLimit !== Infinity && (currentStories + recipients.length) > storyLimit) {
             throw new ForbiddenError(
-              `Insufficient promo credits. You have ${usage.promoCreditsBalance} credits, but need ${recipients.length}. Please top up credits or upgrade to Starter plan.`
+              `WhatsApp story limit exceeded. You have posted ${currentStories} stories this month. Your ${company.plan} plan allows ${storyLimit} stories per month.`
             );
           }
         } else {
-          // Other plans: check if they have enough credits
-          if (usage.promoCreditsBalance < recipients.length) {
-            throw new ForbiddenError(
-              `Insufficient promo credits. You have ${usage.promoCreditsBalance} credits, but need ${recipients.length}. Please top up credits.`
-            );
+          // WhatsApp promo message limit check
+          const promoLimit = getWhatsappPromoLimit(company);
+          const currentPromos = usage.whatsappPromoSent;
+          
+          // Check if within included limit
+          if (promoLimit !== Infinity && (currentPromos + recipients.length) > promoLimit) {
+            // Calculate how many exceed the included limit
+            const includedRemaining = Math.max(0, promoLimit - currentPromos);
+            const exceedingCount = recipients.length - includedRemaining;
+            
+            if (exceedingCount > 0) {
+              // Need to deduct credits for messages exceeding included limit
+              if (usage.promoCreditsBalance < exceedingCount) {
+                throw new ForbiddenError(
+                  `Insufficient promo credits. You have ${usage.promoCreditsBalance} credits, but need ${exceedingCount} for messages exceeding your included limit. Please top up credits.`
+                );
+              }
+            }
+          }
+          
+          // FREE plan: must have credits for all messages
+          if (company.plan === 'FREE') {
+            if (usage.promoCreditsBalance < recipients.length) {
+              throw new ForbiddenError(
+                `Insufficient promo credits. You have ${usage.promoCreditsBalance} credits, but need ${recipients.length}. Please top up credits or upgrade to Starter plan.`
+              );
+            }
           }
         }
       }
@@ -577,18 +615,53 @@ export const marketingService = {
       } else if (campaign.channel === 'WHATSAPP') {
         await this.logWhatsAppMessage(campaign, recipient);
         
-        // Deduct promo credits for company campaigns
+        // Track WhatsApp usage for company campaigns
         if (campaign.senderType === 'COMPANY' && campaign.senderCompanyId) {
-          const deducted = await deductPromoCredits(
-            campaign.senderCompanyId,
-            1,
-            campaign.id,
-            `WhatsApp campaign: ${campaign.id}`
-          );
+          // Determine if this is a story or promo message (for now, treat all as promo unless specified)
+          // TODO: Add campaign metadata field to distinguish story vs promo
+          const isStory = false; // Default to promo message
           
-          if (!deducted) {
-            // This shouldn't happen as we check before sending, but handle gracefully
-            console.error(`Failed to deduct credits for campaign ${campaign.id}, recipient ${recipient.id}`);
+          if (isStory) {
+            // Track story posts
+            await incrementWhatsappStoriesPosted(campaign.senderCompanyId, 1).catch((err) => {
+              console.error('Failed to increment WhatsApp story count:', err);
+            });
+          } else {
+            // Get company to check limits before incrementing
+            const company = await prisma.company.findUnique({
+              where: { id: campaign.senderCompanyId },
+              select: { plan: true },
+            });
+            
+            if (company) {
+              const usage = await getCompanyUsage(campaign.senderCompanyId);
+              const promoLimit = getWhatsappPromoLimit(company);
+              
+              // Check if we need to deduct credits (before incrementing)
+              // FREE plan: always deduct credits
+              // Other plans: only deduct if exceeding included limit
+              const shouldDeductCredits = company.plan === 'FREE' || 
+                (promoLimit !== Infinity && usage && usage.whatsappPromoSent >= promoLimit);
+              
+              if (shouldDeductCredits) {
+                const deducted = await deductPromoCredits(
+                  campaign.senderCompanyId,
+                  1,
+                  campaign.id,
+                  `WhatsApp promo campaign: ${campaign.id}`
+                );
+                
+                if (!deducted) {
+                  // This shouldn't happen as we check before sending, but handle gracefully
+                  console.error(`Failed to deduct credits for campaign ${campaign.id}, recipient ${recipient.id}`);
+                }
+              }
+              
+              // Track promo messages (always increment, regardless of credit deduction)
+              await incrementWhatsappPromoSent(campaign.senderCompanyId, 1).catch((err) => {
+                console.error('Failed to increment WhatsApp promo count:', err);
+              });
+            }
           }
         }
       }

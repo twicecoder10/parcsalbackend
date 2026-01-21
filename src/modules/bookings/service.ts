@@ -20,7 +20,6 @@ import { generateBookingId } from '../../utils/bookingId';
 import { deleteImagesByUrls } from '../../utils/upload';
 import { generateShippingLabel } from '../../utils/labelGenerator';
 import { calculateBookingCharges } from '../../utils/paymentCalculator';
-import { getEffectiveCommissionBps } from '../billing/plans';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -675,19 +674,26 @@ export const bookingService = {
       const company = booking.companyId
         ? await prisma.company.findUnique({
             where: { id: booking.companyId },
-            select: { commissionRateBps: true },
+            select: { plan: true, commissionRateBps: true },
           })
         : null;
 
+      // Calculate fees - adminFeeAmount is ALWAYS 15% (charged to customer)
+      // This is separate from commission (which is only deducted from FREE plan companies)
       const baseAmountMinor = Math.round(Number(booking.calculatedPrice) * 100);
-      const commissionBps = company ? getEffectiveCommissionBps(company) : 1500; // Default 15% if no company
-      const charges = calculateBookingCharges(baseAmountMinor, commissionBps);
+      const ADMIN_FEE_BPS = 1500; // Always 15% admin fee charged to customer
+      const charges = calculateBookingCharges(baseAmountMinor, ADMIN_FEE_BPS);
+      
+      // Calculate commission amount deducted from company payout
+      const companyPlan = company?.plan || 'FREE';
+      const commissionAmount = companyPlan === 'FREE' ? charges.adminFeeAmount : 0;
       
       // Add calculated fees to booking object for response
       bookingWithFees.baseAmount = charges.baseAmount;
       bookingWithFees.adminFeeAmount = charges.adminFeeAmount;
       bookingWithFees.processingFeeAmount = charges.processingFeeAmount;
       bookingWithFees.totalAmount = charges.totalAmount;
+      bookingWithFees.commissionAmount = commissionAmount;
     }
 
     // Filter sensitive data for customers

@@ -53,6 +53,7 @@ export interface CreateExtraChargeData {
   baseAmount: number;
   adminFeeAmount: number;
   processingFeeAmount: number;
+  commissionAmount?: number | null;
   totalAmount: number;
   expiresAt: Date;
   status?: ExtraChargeStatus;

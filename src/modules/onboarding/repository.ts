@@ -184,6 +184,7 @@ export const onboardingRepository = {
     return [
       'company_profile',
       'payment_setup',
+      'payout_setup',
     ];
   },
 };

@@ -80,7 +80,10 @@ export async function ensureCurrentUsagePeriod(companyId: string): Promise<void>
         companyId,
         periodStart,
         periodEnd,
+        shipmentsCreated: 0,
         marketingEmailsSent: 0,
+        whatsappPromoSent: 0,
+        whatsappStoriesPosted: 0,
         promoCreditsBalance: 0,
         promoCreditsUsed: 0,
       },
@@ -213,6 +216,54 @@ export async function addPromoCredits(
         },
       },
     });
+  });
+}
+
+/**
+ * Increment shipments created count
+ */
+export async function incrementShipmentsCreated(companyId: string, count: number = 1): Promise<void> {
+  await ensureCurrentUsagePeriod(companyId);
+  
+  await prisma.companyUsage.update({
+    where: { companyId },
+    data: {
+      shipmentsCreated: {
+        increment: count,
+      },
+    },
+  });
+}
+
+/**
+ * Increment WhatsApp promo messages sent count
+ */
+export async function incrementWhatsappPromoSent(companyId: string, count: number = 1): Promise<void> {
+  await ensureCurrentUsagePeriod(companyId);
+  
+  await prisma.companyUsage.update({
+    where: { companyId },
+    data: {
+      whatsappPromoSent: {
+        increment: count,
+      },
+    },
+  });
+}
+
+/**
+ * Increment WhatsApp stories posted count
+ */
+export async function incrementWhatsappStoriesPosted(companyId: string, count: number = 1): Promise<void> {
+  await ensureCurrentUsagePeriod(companyId);
+  
+  await prisma.companyUsage.update({
+    where: { companyId },
+    data: {
+      whatsappStoriesPosted: {
+        increment: count,
+      },
+    },
   });
 }
 

@@ -15,7 +15,11 @@ export const connectController = {
       }
 
       const dto = req.body as CreateOnboardingLinkDto;
-      const url = await connectService.createOnboardingLink(req.user.companyId, dto.returnUrl);
+      const url = await connectService.createOnboardingLink(
+        req.user.companyId,
+        dto.returnUrl,
+        dto.fromOnboarding
+      );
 
       res.status(200).json({
         status: 'success',

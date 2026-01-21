@@ -94,6 +94,17 @@ export const emailWorker = new Worker(
 
         case 'send-booking-confirmation': {
           const data = jobData as SendBookingConfirmationEmailJobData;
+          
+          // Ensure departureTime is a Date object
+          const departureTime = data.departureTime instanceof Date 
+            ? data.departureTime 
+            : new Date(data.departureTime);
+          
+          // Validate departureTime is valid
+          if (isNaN(departureTime.getTime())) {
+            throw new Error(`Invalid departureTime: ${data.departureTime}`);
+          }
+          
           await emailService.sendBookingConfirmationEmail(
             data.customerEmail,
             data.customerName,
@@ -103,8 +114,8 @@ export const emailWorker = new Worker(
               originCountry: '', // Not in job data, but email service expects it
               destinationCity: data.destinationCity,
               destinationCountry: '', // Not in job data, but email service expects it
-              departureTime: data.departureTime,
-              arrivalTime: new Date(data.departureTime.getTime() + 24 * 60 * 60 * 1000), // Estimate
+              departureTime: departureTime,
+              arrivalTime: new Date(departureTime.getTime() + 24 * 60 * 60 * 1000), // Estimate
               mode: 'VAN', // Default, not in job data
               price: data.price,
               currency: 'gbp',
