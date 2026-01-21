@@ -4,7 +4,8 @@ import prisma from '../../config/database';
 import { planFromPriceId } from './stripePriceMap';
 import { BadRequestError } from '../../utils/errors';
 import { getPlanEntitlements } from './plans';
-import { CarrierPlan } from '@prisma/client';
+import { CarrierPlan, SubscriptionStatus } from '@prisma/client';
+import { subscriptionRepository } from '../subscriptions/repository';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -141,6 +142,75 @@ async function updateCompanyFromSubscription(
     where: { id: companyId },
     data: updateData,
   });
+
+  // Also update the Subscription table to keep it in sync
+  const stripeCustomerId = updateData.stripeCustomerId;
+  const stripeSubscriptionId = updateData.stripeSubscriptionId;
+  
+  if (stripeSubscriptionId && stripeCustomerId) {
+    try {
+      // Find the CompanyPlan by matching the plan name
+      const companyPlan = await prisma.companyPlan.findFirst({
+        where: {
+          carrierPlan: plan,
+        },
+      });
+
+      if (companyPlan) {
+        // Check if subscription already exists
+        const existingSubscription = await subscriptionRepository.findByStripeSubscriptionId(stripeSubscriptionId);
+        
+        // Map Stripe subscription status to our SubscriptionStatus enum
+        let subscriptionStatus: SubscriptionStatus = 'ACTIVE';
+        if (subscription.status === 'canceled') {
+          subscriptionStatus = 'CANCELLED';
+        } else if (subscription.status === 'past_due' || subscription.status === 'unpaid') {
+          subscriptionStatus = 'PAST_DUE';
+        } else if (subscription.status === 'active' || subscription.status === 'trialing') {
+          subscriptionStatus = 'ACTIVE';
+        }
+
+        const currentPeriodStart = subscription.current_period_start
+          ? new Date(subscription.current_period_start * 1000)
+          : new Date();
+        const currentPeriodEnd = subscription.current_period_end
+          ? new Date(subscription.current_period_end * 1000)
+          : new Date();
+
+        if (existingSubscription) {
+          // Update existing subscription
+          await subscriptionRepository.updatePlan(existingSubscription.id, companyPlan.id);
+          await subscriptionRepository.updateStatus(
+            existingSubscription.id,
+            subscriptionStatus,
+            currentPeriodStart,
+            currentPeriodEnd
+          );
+          console.log(`[Billing Webhook] Updated subscription record ${existingSubscription.id} for company ${companyId}`);
+        } else {
+          // Create new subscription record
+          await subscriptionRepository.create({
+            companyId,
+            companyPlanId: companyPlan.id,
+            stripeCustomerId,
+            stripeSubscriptionId,
+            status: subscriptionStatus,
+            currentPeriodStart,
+            currentPeriodEnd,
+          });
+          console.log(`[Billing Webhook] Created subscription record for company ${companyId}`);
+        }
+      } else {
+        console.warn(`[Billing Webhook] CompanyPlan not found for plan ${plan}, skipping Subscription table update`);
+      }
+    } catch (error: any) {
+      // Log error but don't fail the webhook - Company table update already succeeded
+      console.error(`[Billing Webhook] Failed to update Subscription table for company ${companyId}:`, {
+        error: error.message,
+        stack: error.stack,
+      });
+    }
+  }
 
   console.log(`[Billing Webhook] Updated company ${companyId}: plan=${plan}, active=${active}, stripeCustomerId=${updateData.stripeCustomerId || 'not set'}, stripeSubscriptionId=${updateData.stripeSubscriptionId || 'not set'}`);
 }
@@ -303,6 +373,23 @@ async function handleSubscriptionDeleted(event: Stripe.Event): Promise<void> {
     },
   });
 
+  // Also update the Subscription table - mark as CANCELLED
+  if (subscription.id) {
+    try {
+      const existingSubscription = await subscriptionRepository.findByStripeSubscriptionId(subscription.id);
+      if (existingSubscription) {
+        await subscriptionRepository.updateStatus(existingSubscription.id, 'CANCELLED');
+        console.log(`[Billing Webhook] Updated subscription record ${existingSubscription.id} to CANCELLED`);
+      }
+    } catch (error: any) {
+      // Log error but don't fail the webhook
+      console.error(`[Billing Webhook] Failed to update Subscription table for deleted subscription ${subscription.id}:`, {
+        error: error.message,
+        stack: error.stack,
+      });
+    }
+  }
+
   console.log(`[Billing Webhook] Deactivated subscription for company ${company.id}`);
 }
 
@@ -339,17 +426,36 @@ async function handleInvoicePaymentSucceeded(event: Stripe.Event): Promise<void>
   }
 
   // Update renewal date
+  const currentPeriodEnd = subscription.current_period_end
+    ? new Date(subscription.current_period_end * 1000)
+    : null;
+
   await prisma.company.update({
     where: { id: company.id },
     data: {
-      planRenewsAt: subscription.current_period_end
-        ? new Date(subscription.current_period_end * 1000)
-        : null,
-      stripeCurrentPeriodEnd: subscription.current_period_end
-        ? new Date(subscription.current_period_end * 1000)
-        : null,
+      planRenewsAt: currentPeriodEnd,
+      stripeCurrentPeriodEnd: currentPeriodEnd,
     },
   });
+
+  // Also update the Subscription table
+  try {
+    const existingSubscription = await subscriptionRepository.findByStripeSubscriptionId(subscriptionId);
+    if (existingSubscription && currentPeriodEnd) {
+      await subscriptionRepository.updateStatus(
+        existingSubscription.id,
+        'ACTIVE',
+        subscription.current_period_start ? new Date(subscription.current_period_start * 1000) : undefined,
+        currentPeriodEnd
+      );
+    }
+  } catch (error: any) {
+    // Log error but don't fail the webhook
+    console.error(`[Billing Webhook] Failed to update Subscription table for invoice payment:`, {
+      error: error.message,
+      subscriptionId,
+    });
+  }
 
   console.log(`[Billing Webhook] Updated renewal date for company ${company.id}`);
 }
@@ -393,6 +499,20 @@ async function handleInvoicePaymentFailed(event: Stripe.Event): Promise<void> {
       planActive: false,
     },
   });
+
+  // Also update the Subscription table
+  try {
+    const existingSubscription = await subscriptionRepository.findByStripeSubscriptionId(subscriptionId);
+    if (existingSubscription) {
+      await subscriptionRepository.updateStatus(existingSubscription.id, 'PAST_DUE');
+    }
+  } catch (error: any) {
+    // Log error but don't fail the webhook
+    console.error(`[Billing Webhook] Failed to update Subscription table for payment failure:`, {
+      error: error.message,
+      subscriptionId,
+    });
+  }
 
   console.log(`[Billing Webhook] Marked plan inactive for company ${company.id} due to payment failure`);
 }
