@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { connectController } from './controller';
 import { authenticate, requireRole } from '../../middleware/auth';
 import { validate } from '../../middleware/validator';
-import { createOnboardingLinkSchema, requestPayoutSchema } from './dto';
+import { createOnboardingLinkSchema, createDashboardLoginLinkSchema, requestPayoutSchema } from './dto';
 
 const router = Router();
 
@@ -15,6 +15,13 @@ router.post(
   '/onboarding-link',
   validate(createOnboardingLinkSchema),
   connectController.createOnboardingLink
+);
+
+// Create dashboard login link
+router.post(
+  '/dashboard-link',
+  validate(createDashboardLoginLinkSchema),
+  connectController.createDashboardLoginLink
 );
 
 // Get account status

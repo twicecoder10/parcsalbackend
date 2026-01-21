@@ -93,6 +93,27 @@ export const connectController = {
     }
   },
 
+  async createDashboardLoginLink(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user || !req.user.companyId) {
+        res.status(403).json({
+          status: 'error',
+          message: 'User must be associated with a company',
+        });
+        return;
+      }
+
+      const url = await connectService.createDashboardLoginLink(req.user.companyId);
+
+      res.status(200).json({
+        status: 'success',
+        data: { url },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async requestPayout(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user || !req.user.companyId) {

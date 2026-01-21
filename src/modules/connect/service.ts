@@ -195,6 +195,27 @@ export const connectService = {
   },
 
   /**
+   * Create Stripe Express dashboard login link
+   */
+  async createDashboardLoginLink(companyId: string): Promise<string> {
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
+    if (!company.stripeAccountId) {
+      throw new BadRequestError('Stripe Connect account not found');
+    }
+
+    const loginLink = await stripe.accounts.createLoginLink(company.stripeAccountId);
+
+    return loginLink.url;
+  },
+
+  /**
    * Refresh account status from Stripe
    */
   async refreshAccountStatus(companyId: string) {

@@ -7,6 +7,10 @@ export const createOnboardingLinkSchema = z.object({
   }),
 });
 
+export const createDashboardLoginLinkSchema = z.object({
+  body: z.object({}),
+});
+
 export const requestPayoutSchema = z.object({
   body: z.object({
     amount: z.number().positive('Amount must be positive'),
