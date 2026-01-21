@@ -178,14 +178,18 @@ async function updateCompanyFromSubscription(
           : new Date();
 
         if (existingSubscription) {
-          // Update existing subscription
-          await subscriptionRepository.updatePlan(existingSubscription.id, companyPlan.id);
-          await subscriptionRepository.updateStatus(
-            existingSubscription.id,
-            subscriptionStatus,
-            currentPeriodStart,
-            currentPeriodEnd
-          );
+          // Update existing subscription - update all fields at once
+          await prisma.subscription.update({
+            where: { id: existingSubscription.id },
+            data: {
+              companyPlanId: companyPlan.id,
+              stripeCustomerId, // Update in case it changed
+              stripeSubscriptionId, // Update in case it changed (though unlikely)
+              status: subscriptionStatus,
+              currentPeriodStart,
+              currentPeriodEnd,
+            },
+          });
           console.log(`[Billing Webhook] Updated subscription record ${existingSubscription.id} for company ${companyId}`);
         } else {
           // Create new subscription record
