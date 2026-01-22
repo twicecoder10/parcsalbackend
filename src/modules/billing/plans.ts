@@ -20,7 +20,9 @@ export interface PlanEntitlements {
   canAccessScanWarehouses: boolean;
   analyticsLevel: AnalyticsLevel;
   marketingEmailMonthlyLimit: number; // 0 means no included, but pay-as-you-go allowed for FREE
-  monthlyPromoCreditsIncluded: number;
+  monthlyWhatsappPromoCreditsIncluded: number;
+  monthlyWhatsappStoryCreditsIncluded: number;
+  monthlyMarketingEmailCreditsIncluded: number;
   whatsappPromoLimit: number; // Monthly included WhatsApp promo messages
   whatsappStoryLimit: number; // Monthly WhatsApp story posts
   canRunCarrierPromoCampaigns: boolean; // FREE can only if they have PAYG credits
@@ -39,7 +41,9 @@ const PLAN_ENTITLEMENTS: Record<CarrierPlan, PlanEntitlements> = {
     canAccessScanWarehouses: true, // Warehouses available to all plans (no enforcement)
     analyticsLevel: 'BASIC',
     marketingEmailMonthlyLimit: 0, // No email campaigns allowed
-    monthlyPromoCreditsIncluded: 0, // No WhatsApp credits included
+    monthlyWhatsappPromoCreditsIncluded: 0,
+    monthlyWhatsappStoryCreditsIncluded: 0,
+    monthlyMarketingEmailCreditsIncluded: 0,
     whatsappPromoLimit: 0,
     whatsappStoryLimit: 0,
     canRunCarrierPromoCampaigns: false, // Only via PAYG credits (checked separately)
@@ -56,7 +60,9 @@ const PLAN_ENTITLEMENTS: Record<CarrierPlan, PlanEntitlements> = {
     canAccessScanWarehouses: true, // Access to Scan and Warehouses modules
     analyticsLevel: 'ENHANCED',
     marketingEmailMonthlyLimit: 1000, // 1,000 emails / month
-    monthlyPromoCreditsIncluded: 0, // WhatsApp credits tracked separately
+    monthlyWhatsappPromoCreditsIncluded: 100, // Match included promo limit
+    monthlyWhatsappStoryCreditsIncluded: 20, // Match included story limit
+    monthlyMarketingEmailCreditsIncluded: 1000, // Match included email limit
     whatsappPromoLimit: 100, // 100 promo WhatsApp messages / month
     whatsappStoryLimit: 20, // 20 story posts / month
     canRunCarrierPromoCampaigns: true,
@@ -73,7 +79,9 @@ const PLAN_ENTITLEMENTS: Record<CarrierPlan, PlanEntitlements> = {
     canAccessScanWarehouses: true,
     analyticsLevel: 'FULL',
     marketingEmailMonthlyLimit: 5000, // 5,000 emails / month
-    monthlyPromoCreditsIncluded: 0, // WhatsApp credits tracked separately
+    monthlyWhatsappPromoCreditsIncluded: 250,
+    monthlyWhatsappStoryCreditsIncluded: 50,
+    monthlyMarketingEmailCreditsIncluded: 5000,
     whatsappPromoLimit: 250, // 250 promo WhatsApp messages / month
     whatsappStoryLimit: 50, // 50 story posts / month
     canRunCarrierPromoCampaigns: true,
@@ -90,7 +98,9 @@ const PLAN_ENTITLEMENTS: Record<CarrierPlan, PlanEntitlements> = {
     canAccessScanWarehouses: true,
     analyticsLevel: 'CUSTOM',
     marketingEmailMonthlyLimit: Infinity, // Custom limit per company
-    monthlyPromoCreditsIncluded: Infinity, // Custom allocation per company
+    monthlyWhatsappPromoCreditsIncluded: Infinity,
+    monthlyWhatsappStoryCreditsIncluded: Infinity,
+    monthlyMarketingEmailCreditsIncluded: Infinity,
     whatsappPromoLimit: Infinity, // Custom limit
     whatsappStoryLimit: Infinity, // Custom limit
     canRunCarrierPromoCampaigns: true,

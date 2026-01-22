@@ -701,7 +701,7 @@ export const paymentService = {
             currentPeriodEnd: new Date(subscription.current_period_end * 1000),
           };
 
-          const created = await subscriptionRepository.create(subscriptionData);
+          const created = await subscriptionRepository.upsertByStripeSubscriptionId(subscriptionData);
           
           // Ensure stripeCustomerId is saved to Company (if not already set)
           await prisma.company.update({

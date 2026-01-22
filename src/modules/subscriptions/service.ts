@@ -6,10 +6,146 @@ import { NotFoundError, ForbiddenError, BadRequestError } from '../../utils/erro
 import { AuthRequest } from '../../middleware/auth';
 import prisma from '../../config/database';
 import { onboardingRepository } from '../onboarding/repository';
+import { CarrierPlan, CreditWalletType } from '@prisma/client';
+import { getPlanEntitlements } from '../billing/plans';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
 });
+
+const PLAN_RANK: Record<CarrierPlan, number> = {
+  FREE: 0,
+  STARTER: 1,
+  PROFESSIONAL: 2,
+  ENTERPRISE: 3,
+};
+
+function isUpgrade(fromPlan: CarrierPlan, toPlan: CarrierPlan): boolean {
+  return PLAN_RANK[toPlan] > PLAN_RANK[fromPlan];
+}
+
+function getWalletMonthlyCredits(plan: CarrierPlan) {
+  const entitlements = getPlanEntitlements(plan);
+  return {
+    WHATSAPP_PROMO: entitlements.monthlyWhatsappPromoCreditsIncluded,
+    WHATSAPP_STORY: entitlements.monthlyWhatsappStoryCreditsIncluded,
+    MARKETING_EMAIL: entitlements.monthlyMarketingEmailCreditsIncluded,
+  } as Record<CreditWalletType, number>;
+}
+
+async function ensureStripeCustomerId(params: {
+  companyId: string;
+  plan: CarrierPlan;
+  existingStripeCustomerId?: string | null;
+}) {
+  if (params.existingStripeCustomerId) {
+    return params.existingStripeCustomerId;
+  }
+
+  const companyWithAdmin = await prisma.company.findUnique({
+    where: { id: params.companyId },
+    select: {
+      name: true,
+      admin: {
+        select: {
+          email: true,
+          fullName: true,
+        },
+      },
+    },
+  });
+
+  if (!companyWithAdmin || !companyWithAdmin.admin) {
+    throw new NotFoundError('Company admin not found');
+  }
+
+  const customer = await stripe.customers.create({
+    email: companyWithAdmin.admin.email,
+    name: companyWithAdmin.admin.fullName || companyWithAdmin.name,
+    metadata: {
+      companyId: params.companyId,
+      plan: params.plan,
+    },
+  });
+
+  await prisma.company.update({
+    where: { id: params.companyId },
+    data: {
+      stripeCustomerId: customer.id,
+    },
+  });
+
+  return customer.id;
+}
+
+async function grantProratedUpgradeCredits(params: {
+  companyId: string;
+  fromPlan: CarrierPlan;
+  toPlan: CarrierPlan;
+  periodStart: Date;
+  periodEnd: Date;
+  subscriptionId: string;
+}) {
+  if (!isUpgrade(params.fromPlan, params.toPlan)) {
+    return;
+  }
+
+  const now = new Date();
+  const totalMs = params.periodEnd.getTime() - params.periodStart.getTime();
+  const remainingMs = Math.max(0, params.periodEnd.getTime() - now.getTime());
+  const ratio = totalMs > 0 ? remainingMs / totalMs : 0;
+
+  if (ratio <= 0) {
+    return;
+  }
+
+  const fromCredits = getWalletMonthlyCredits(params.fromPlan);
+  const toCredits = getWalletMonthlyCredits(params.toPlan);
+  const { addCredits } = await import('../billing/usage');
+
+  for (const walletType of Object.keys(toCredits) as CreditWalletType[]) {
+    const fromAmount = fromCredits[walletType];
+    const toAmount = toCredits[walletType];
+
+    if (!Number.isFinite(fromAmount) || !Number.isFinite(toAmount)) {
+      continue;
+    }
+
+    const diff = Math.max(0, toAmount - fromAmount);
+    if (diff <= 0) {
+      continue;
+    }
+
+    const proratedAmount = Math.round(diff * ratio);
+    if (proratedAmount <= 0) {
+      continue;
+    }
+
+    const referenceId = `${params.subscriptionId}:${walletType}:${params.periodEnd.toISOString()}`;
+    const existing = await prisma.companyCreditTransaction.findFirst({
+      where: {
+        companyId: params.companyId,
+        walletType,
+        type: 'GRANT',
+        referenceId,
+      },
+      select: { id: true },
+    });
+
+    if (existing) {
+      continue;
+    }
+
+    await addCredits(
+      params.companyId,
+      walletType,
+      proratedAmount,
+      'GRANT',
+      `Prorated upgrade credits (${params.fromPlan} -> ${params.toPlan})`,
+      referenceId
+    );
+  }
+}
 
 /**
  * Helper function to find a CompanyPlan by matching the monthly price from Stripe subscription
@@ -253,6 +389,7 @@ export const subscriptionService = {
       // Get plan
       const plan = await prisma.companyPlan.findUnique({
         where: { id: planId },
+        select: { id: true, carrierPlan: true },
       });
 
       if (!plan) {
@@ -270,7 +407,7 @@ export const subscriptionService = {
         currentPeriodEnd: new Date(subscription.current_period_end * 1000),
       };
 
-      const created = await subscriptionRepository.create(subscriptionData);
+      const created = await subscriptionRepository.upsertByStripeSubscriptionId(subscriptionData);
       
       // Ensure stripeCustomerId is saved to Company (if not already set)
       await prisma.company.update({
@@ -281,11 +418,27 @@ export const subscriptionService = {
         },
       });
       
+      const currentCompany = await prisma.company.findUnique({
+        where: { id: companyId },
+        select: { plan: true },
+      });
+
       await subscriptionRepository.updateCompanyPlan(
         companyId,
         planId,
         new Date(subscription.current_period_end * 1000)
       );
+
+      if (currentCompany?.plan && plan.carrierPlan) {
+        await grantProratedUpgradeCredits({
+          companyId,
+          fromPlan: currentCompany.plan,
+          toPlan: plan.carrierPlan,
+          periodStart: new Date(subscription.current_period_start * 1000),
+          periodEnd: new Date(subscription.current_period_end * 1000),
+          subscriptionId: subscriptionId,
+        });
+      }
 
       // Mark payment_setup onboarding step as complete
       let onboardingUpdated = false;
@@ -435,6 +588,30 @@ export const subscriptionService = {
               newPlanId || dbSubscription.companyPlanId,
               validPeriodEnd || null
             );
+
+            if (planChanged && newPlanId && validPeriodStart && validPeriodEnd) {
+              const [oldPlan, newPlan] = await Promise.all([
+                prisma.companyPlan.findUnique({
+                  where: { id: dbSubscription.companyPlanId },
+                  select: { carrierPlan: true },
+                }),
+                prisma.companyPlan.findUnique({
+                  where: { id: newPlanId },
+                  select: { carrierPlan: true },
+                }),
+              ]);
+
+              if (oldPlan?.carrierPlan && newPlan?.carrierPlan) {
+                await grantProratedUpgradeCredits({
+                  companyId: dbSubscription.companyId,
+                  fromPlan: oldPlan.carrierPlan,
+                  toPlan: newPlan.carrierPlan,
+                  periodStart: validPeriodStart,
+                  periodEnd: validPeriodEnd,
+                  subscriptionId: subscription.id,
+                });
+              }
+            }
           } else if (subscription.status === 'unpaid' || (subscription.status === 'canceled' && !subscription.cancel_at_period_end)) {
             // Explicitly handle unpaid or immediate cancellation - downgrade to FREE
             await prisma.company.update({
@@ -711,7 +888,7 @@ export const subscriptionService = {
       currentPeriodEnd: new Date(subscription.current_period_end * 1000),
     };
 
-    const created = await subscriptionRepository.create(subscriptionData);
+    const created = await subscriptionRepository.upsertByStripeSubscriptionId(subscriptionData);
     await subscriptionRepository.updateCompanyPlan(
       companyId,
       planId,
@@ -863,50 +1040,65 @@ export const subscriptionService = {
       stripeCustomerId = company.stripeCustomerId;
     }
 
-    // If no Stripe customer ID exists, create one for the company
-    if (!stripeCustomerId) {
-      // Get company admin details for Stripe customer creation
-      const companyWithAdmin = await prisma.company.findUnique({
-        where: { id: req.user.companyId },
-        include: {
-          admin: {
-            select: {
-              email: true,
-              fullName: true,
-            },
-          },
-        },
-      });
-
-      if (!companyWithAdmin || !companyWithAdmin.admin) {
-        throw new NotFoundError('Company admin not found');
-      }
-
-      // Create Stripe customer
-      const customer = await stripe.customers.create({
-        email: companyWithAdmin.admin.email,
-        name: companyWithAdmin.admin.fullName || companyWithAdmin.name,
-        metadata: {
-          companyId: req.user.companyId,
-          plan: company.plan,
-        },
-      });
-
-      // Save Stripe customer ID to company
-      await prisma.company.update({
-        where: { id: req.user.companyId },
-        data: {
-          stripeCustomerId: customer.id,
-        },
-      });
-
-      stripeCustomerId = customer.id;
-    }
+    stripeCustomerId = await ensureStripeCustomerId({
+      companyId: req.user.companyId,
+      plan: company.plan,
+      existingStripeCustomerId: stripeCustomerId,
+    });
 
     // Create Stripe billing portal session for payment method update
     const session = await stripe.billingPortal.sessions.create({
       customer: stripeCustomerId,
       return_url: `${config.frontendUrl}/company/subscription`,
+    });
+
+    return {
+      url: session.url,
+    };
+  },
+
+  async createSubscriptionPortalSession(req: AuthRequest) {
+    if (!req.user || !req.user.companyId) {
+      throw new ForbiddenError('User must be associated with a company');
+    }
+
+    if (req.user.role !== 'COMPANY_ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenError('Only company admins can manage subscriptions');
+    }
+
+    const company = await prisma.company.findUnique({
+      where: { id: req.user.companyId },
+      select: { stripeCustomerId: true, plan: true },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
+    const subscription = await subscriptionRepository.findByCompanyId(req.user.companyId);
+    if (!subscription) {
+      throw new NotFoundError('No active subscription found');
+    }
+
+    if (!subscription.stripeSubscriptionId) {
+      throw new NotFoundError('Stripe subscription not found');
+    }
+
+    const stripeCustomerId = await ensureStripeCustomerId({
+      companyId: req.user.companyId,
+      plan: company.plan,
+      existingStripeCustomerId: subscription.stripeCustomerId || company.stripeCustomerId,
+    });
+
+    const session = await stripe.billingPortal.sessions.create({
+      customer: stripeCustomerId,
+      return_url: `${config.frontendUrl}/company/subscription`,
+      flow_data: {
+        type: 'subscription_update',
+        subscription_update: {
+          subscription: subscription.stripeSubscriptionId,
+        },
+      },
     });
 
     return {

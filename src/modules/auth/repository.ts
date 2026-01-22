@@ -17,6 +17,7 @@ export interface CreateCompanyData {
   description?: string | null;
   country: string;
   city: string;
+  contactEmail?: string | null;
   website?: string | null;
   logoUrl?: string | null;
 }

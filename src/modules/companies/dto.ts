@@ -34,7 +34,7 @@ export const completeCompanyOnboardingSchema = z.object({
     companyWebsite: z.string().url().optional().or(z.literal('')),
     companyLogoUrl: z.string().url().optional().or(z.literal('')),
     contactPhone: z.string().min(1, 'Contact phone is required'),
-    contactEmail: z.string().email('Invalid email address').min(1, 'Contact email is required'),
+    contactEmail: z.string().email('Invalid email address').optional(),
     address: z.string().optional(),
     city: z.string().optional(),
     state: z.string().optional(),
@@ -104,6 +104,14 @@ export const browseCompaniesSchema = z.object({
     country: z.string().optional(),
     city: z.string().optional(),
     search: z.string().optional(),
+  }).optional(),
+});
+
+export const getCreditHistorySchema = z.object({
+  query: z.object({
+    limit: z.string().optional(),
+    offset: z.string().optional(),
+    walletType: z.enum(['WHATSAPP_PROMO', 'WHATSAPP_STORY', 'MARKETING_EMAIL']).optional(),
   }).optional(),
 });
 

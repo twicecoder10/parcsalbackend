@@ -192,8 +192,8 @@ async function updateCompanyFromSubscription(
           });
           console.log(`[Billing Webhook] Updated subscription record ${existingSubscription.id} for company ${companyId}`);
         } else {
-          // Create new subscription record
-          await subscriptionRepository.create({
+          // Create or update subscription record to stay idempotent
+          await subscriptionRepository.upsertByStripeSubscriptionId({
             companyId,
             companyPlanId: companyPlan.id,
             stripeCustomerId,

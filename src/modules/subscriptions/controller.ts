@@ -93,5 +93,17 @@ export const subscriptionController = {
       next(error);
     }
   },
+
+  async createSubscriptionPortalSession(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const result = await subscriptionService.createSubscriptionPortalSession(req);
+      res.status(200).json({
+        status: 'success',
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 };
 

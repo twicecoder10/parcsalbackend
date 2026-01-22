@@ -4,7 +4,7 @@ import { authenticate, requireCompanyAccess } from '../../middleware/auth';
 import { validate } from '../../middleware/validator';
 import { analyticsLimiter } from '../../middleware/rateLimiter';
 import { requirePlan } from '../../middleware/entitlements';
-import { updateCompanySchema, completeCompanyOnboardingSchema, createWarehouseAddressSchema, updateWarehouseAddressSchema, deleteWarehouseAddressSchema, getCompanyWarehousesSchema, getPublicCompanyProfileSchema, getCompanyShipmentsSchema, browseCompaniesSchema, staffRestrictionsSchema } from './dto';
+import { updateCompanySchema, completeCompanyOnboardingSchema, createWarehouseAddressSchema, updateWarehouseAddressSchema, deleteWarehouseAddressSchema, getCompanyWarehousesSchema, getPublicCompanyProfileSchema, getCompanyShipmentsSchema, browseCompaniesSchema, staffRestrictionsSchema, getCreditHistorySchema } from './dto';
 
 const router = Router();
 
@@ -108,6 +108,14 @@ router.get(
   authenticate,
   requireCompanyAccess,
   companyController.getMyUsage
+);
+
+router.get(
+  '/me/credits/history',
+  authenticate,
+  requireCompanyAccess,
+  validate(getCreditHistorySchema),
+  companyController.getMyCreditHistory
 );
 
 // Company Settings

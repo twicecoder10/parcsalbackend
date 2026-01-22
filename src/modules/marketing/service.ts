@@ -11,12 +11,12 @@ import {
   getWhatsappStoryLimit,
   canRunEmailCampaigns
 } from '../billing/planConfig';
-import { 
+import {
   ensureCurrentUsagePeriod, 
   incrementMarketingEmailsSent, 
   incrementWhatsappPromoSent,
   incrementWhatsappStoriesPosted,
-  deductPromoCredits,
+  deductCredits,
   getCompanyUsage 
 } from '../billing/usage';
 import prisma from '../../config/database';
@@ -391,9 +391,16 @@ export const marketingService = {
         
         // Enforce the limit (limit can be Infinity for Enterprise)
         if (limit !== Infinity && (currentSent + recipients.length) > limit) {
-          throw new ForbiddenError(
-            `Email limit exceeded. You have sent ${currentSent} emails this month. Your ${company.plan} plan allows ${limit} emails per month. Please upgrade or wait for next month.`
-          );
+          const includedRemaining = Math.max(0, limit - currentSent);
+          const exceedingCount = recipients.length - includedRemaining;
+          
+          if (exceedingCount > 0) {
+            if (usage.marketingEmailCreditsBalance < exceedingCount) {
+              throw new ForbiddenError(
+                `Insufficient marketing email credits. You have ${usage.marketingEmailCreditsBalance} credits, but need ${exceedingCount} for emails exceeding your included limit. Please top up credits.`
+              );
+            }
+          }
         }
       }
 
@@ -416,9 +423,24 @@ export const marketingService = {
           const currentStories = usage.whatsappStoriesPosted;
           
           if (storyLimit !== Infinity && (currentStories + recipients.length) > storyLimit) {
-            throw new ForbiddenError(
-              `WhatsApp story limit exceeded. You have posted ${currentStories} stories this month. Your ${company.plan} plan allows ${storyLimit} stories per month.`
-            );
+            const includedRemaining = Math.max(0, storyLimit - currentStories);
+            const exceedingCount = recipients.length - includedRemaining;
+            
+            if (exceedingCount > 0) {
+              if (usage.whatsappStoryCreditsBalance < exceedingCount) {
+                throw new ForbiddenError(
+                  `Insufficient WhatsApp story credits. You have ${usage.whatsappStoryCreditsBalance} credits, but need ${exceedingCount} for stories exceeding your included limit. Please top up credits.`
+                );
+              }
+            }
+          }
+
+          if (company.plan === 'FREE') {
+            if (usage.whatsappStoryCreditsBalance < recipients.length) {
+              throw new ForbiddenError(
+                `Insufficient WhatsApp story credits. You have ${usage.whatsappStoryCreditsBalance} credits, but need ${recipients.length}. Please top up credits or upgrade to Starter plan.`
+              );
+            }
           }
         } else {
           // WhatsApp promo message limit check
@@ -433,9 +455,9 @@ export const marketingService = {
             
             if (exceedingCount > 0) {
               // Need to deduct credits for messages exceeding included limit
-              if (usage.promoCreditsBalance < exceedingCount) {
+              if (usage.whatsappPromoCreditsBalance < exceedingCount) {
                 throw new ForbiddenError(
-                  `Insufficient promo credits. You have ${usage.promoCreditsBalance} credits, but need ${exceedingCount} for messages exceeding your included limit. Please top up credits.`
+                  `Insufficient WhatsApp promo credits. You have ${usage.whatsappPromoCreditsBalance} credits, but need ${exceedingCount} for messages exceeding your included limit. Please top up credits.`
                 );
               }
             }
@@ -443,9 +465,9 @@ export const marketingService = {
           
           // FREE plan: must have credits for all messages
           if (company.plan === 'FREE') {
-            if (usage.promoCreditsBalance < recipients.length) {
+            if (usage.whatsappPromoCreditsBalance < recipients.length) {
               throw new ForbiddenError(
-                `Insufficient promo credits. You have ${usage.promoCreditsBalance} credits, but need ${recipients.length}. Please top up credits or upgrade to Starter plan.`
+                `Insufficient WhatsApp promo credits. You have ${usage.whatsappPromoCreditsBalance} credits, but need ${recipients.length}. Please top up credits or upgrade to Starter plan.`
               );
             }
           }
@@ -605,6 +627,31 @@ export const marketingService = {
         
         // Track email usage for company campaigns
         if (campaign.senderType === 'COMPANY' && campaign.senderCompanyId) {
+          const company = await prisma.company.findUnique({
+            where: { id: campaign.senderCompanyId },
+            select: { plan: true },
+          });
+
+          if (company) {
+            const usage = await getCompanyUsage(campaign.senderCompanyId);
+            const emailLimit = getMarketingEmailLimit(company);
+            const shouldDeductCredits = emailLimit !== Infinity && usage && usage.marketingEmailsSent >= emailLimit;
+
+            if (shouldDeductCredits) {
+              const deducted = await deductCredits(
+                campaign.senderCompanyId,
+                'MARKETING_EMAIL',
+                1,
+                campaign.id,
+                `Marketing email campaign: ${campaign.id}`
+              );
+
+              if (!deducted) {
+                console.error(`Failed to deduct email credits for campaign ${campaign.id}, recipient ${recipient.id}`);
+              }
+            }
+          }
+
           await incrementMarketingEmailsSent(campaign.senderCompanyId, 1).catch((err) => {
             console.error('Failed to increment email count:', err);
             // Don't fail the send if tracking fails
@@ -622,6 +669,32 @@ export const marketingService = {
           const isStory = false; // Default to promo message
           
           if (isStory) {
+            const company = await prisma.company.findUnique({
+              where: { id: campaign.senderCompanyId },
+              select: { plan: true },
+            });
+
+            if (company) {
+              const usage = await getCompanyUsage(campaign.senderCompanyId);
+              const storyLimit = getWhatsappStoryLimit(company);
+              const shouldDeductCredits = company.plan === 'FREE' || 
+                (storyLimit !== Infinity && usage && usage.whatsappStoriesPosted >= storyLimit);
+
+              if (shouldDeductCredits) {
+                const deducted = await deductCredits(
+                  campaign.senderCompanyId,
+                  'WHATSAPP_STORY',
+                  1,
+                  campaign.id,
+                  `WhatsApp story campaign: ${campaign.id}`
+                );
+
+                if (!deducted) {
+                  console.error(`Failed to deduct story credits for campaign ${campaign.id}, recipient ${recipient.id}`);
+                }
+              }
+            }
+
             // Track story posts
             await incrementWhatsappStoriesPosted(campaign.senderCompanyId, 1).catch((err) => {
               console.error('Failed to increment WhatsApp story count:', err);
@@ -644,8 +717,9 @@ export const marketingService = {
                 (promoLimit !== Infinity && usage && usage.whatsappPromoSent >= promoLimit);
               
               if (shouldDeductCredits) {
-                const deducted = await deductPromoCredits(
+                const deducted = await deductCredits(
                   campaign.senderCompanyId,
+                  'WHATSAPP_PROMO',
                   1,
                   campaign.id,
                   `WhatsApp promo campaign: ${campaign.id}`

@@ -487,8 +487,8 @@ export const adminController = {
   async topupCompanyCredits(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
-      const { amount, reason } = req.body;
-      const result = await adminService.topupCompanyCredits(id, amount, reason);
+      const { amount, reason, walletType } = req.body;
+      const result = await adminService.topupCompanyCredits(id, amount, walletType, reason);
       res.status(200).json({
         status: 'success',
         data: result,

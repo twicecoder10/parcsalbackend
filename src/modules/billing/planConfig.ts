@@ -130,11 +130,27 @@ export function getMarketingEmailLimit(company: { plan?: CarrierPlan | null }): 
 }
 
 /**
- * Get monthly promo credits included
+ * Get monthly WhatsApp promo credits included
  */
-export function getMonthlyPromoCredits(company: { plan?: CarrierPlan | null }): number {
+export function getMonthlyWhatsappPromoCredits(company: { plan?: CarrierPlan | null }): number {
   const limits = getPlanLimits(company);
-  return limits.monthlyPromoCreditsIncluded;
+  return limits.monthlyWhatsappPromoCreditsIncluded;
+}
+
+/**
+ * Get monthly WhatsApp story credits included
+ */
+export function getMonthlyWhatsappStoryCredits(company: { plan?: CarrierPlan | null }): number {
+  const limits = getPlanLimits(company);
+  return limits.monthlyWhatsappStoryCreditsIncluded;
+}
+
+/**
+ * Get monthly marketing email credits included
+ */
+export function getMonthlyMarketingEmailCredits(company: { plan?: CarrierPlan | null }): number {
+  const limits = getPlanLimits(company);
+  return limits.monthlyMarketingEmailCreditsIncluded;
 }
 
 /**

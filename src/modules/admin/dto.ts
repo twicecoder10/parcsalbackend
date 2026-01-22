@@ -300,6 +300,7 @@ export const topupCompanyCreditsSchema = z.object({
   body: z.object({
     amount: z.number().int().positive(),
     reason: z.string().optional(),
+    walletType: z.enum(['WHATSAPP_PROMO', 'WHATSAPP_STORY', 'MARKETING_EMAIL']).optional(),
   }),
 });
 

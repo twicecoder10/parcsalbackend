@@ -163,12 +163,15 @@ export const companyService = {
       website: dto.companyWebsite || company.website,
       logoUrl: dto.companyLogoUrl || company.logoUrl,
       contactPhone: dto.contactPhone,
-      contactEmail: dto.contactEmail,
       address: dto.address || null,
       city: dto.city || company.city,
       state: dto.state || null,
       postalCode: dto.postalCode || null,
     };
+
+    if (dto.contactEmail) {
+      updateData.contactEmail = dto.contactEmail;
+    }
 
     await companyRepository.update(req.user.companyId, updateData);
 
@@ -950,10 +953,11 @@ export const companyService = {
     }
 
     // Get plan entitlements for limits
-    const { getPlanLimits } = await import('../billing/planConfig');
+    const { getPlanLimits, getEffectiveRankingTier } = await import('../billing/planConfig');
+    const { getPlanEntitlements, getEffectiveCommissionRate } = await import('../billing/plans');
     const company = await prisma.company.findUnique({
       where: { id: req.user.companyId },
-      select: { plan: true },
+      select: { plan: true, rankingTier: true, commissionRateBps: true },
     });
 
     if (!company) {
@@ -961,14 +965,124 @@ export const companyService = {
     }
 
     const limits = getPlanLimits(company);
+    const effectiveCommissionRate = getEffectiveCommissionRate(company);
+    const rankingTier = getEffectiveRankingTier(company);
+
+    const [teamMembersCount, revenueTotals] = await Promise.all([
+      prisma.user.count({
+        where: { companyId: req.user.companyId },
+      }),
+      prisma.booking.aggregate({
+        where: {
+          companyId: req.user.companyId,
+          paymentStatus: 'PAID',
+          createdAt: {
+            gte: usage.periodStart,
+            lt: usage.periodEnd,
+          },
+        },
+        _sum: {
+          calculatedPrice: true,
+          commissionAmount: true,
+        } as any,
+      }) as Promise<{
+        _sum?: { calculatedPrice?: number | null; commissionAmount?: number | null };
+      }>,
+    ]);
+
+    const revenueProcessed = Number(revenueTotals._sum?.calculatedPrice || 0);
+    const commissionPaidRaw = Number(revenueTotals._sum?.commissionAmount || 0);
+    const commissionPaid = Number((commissionPaidRaw / 100).toFixed(2));
+    const freeCommissionRate = getPlanEntitlements('FREE').commissionRate;
+    const potentialSavings = Number(
+      Math.max(0, freeCommissionRate - effectiveCommissionRate) * revenueProcessed
+    );
+
+    const usageWithCredits = usage as typeof usage & {
+      whatsappPromoCreditsBalance: number;
+      whatsappPromoCreditsUsed: number;
+      whatsappStoryCreditsBalance: number;
+      whatsappStoryCreditsUsed: number;
+      marketingEmailCreditsBalance: number;
+      marketingEmailCreditsUsed: number;
+    };
 
     return {
-      ...usage,
+      ...usageWithCredits,
+      teamMembersCount,
+      revenueProcessed: Number(revenueProcessed.toFixed(2)),
+      commissionPaid,
+      potentialSavings: Number(potentialSavings.toFixed(2)),
+      commissionRate: effectiveCommissionRate,
+      commissionRatePercent: Number((effectiveCommissionRate * 100).toFixed(2)),
+      rankingTier,
+      creditWallets: {
+        whatsappPromo: {
+          balance: usageWithCredits.whatsappPromoCreditsBalance,
+          used: usageWithCredits.whatsappPromoCreditsUsed,
+        },
+        whatsappStory: {
+          balance: usageWithCredits.whatsappStoryCreditsBalance,
+          used: usageWithCredits.whatsappStoryCreditsUsed,
+        },
+        marketingEmail: {
+          balance: usageWithCredits.marketingEmailCreditsBalance,
+          used: usageWithCredits.marketingEmailCreditsUsed,
+        },
+      },
       limits: {
         marketingEmailLimit: limits.marketingEmailMonthlyLimit,
-        promoCreditsIncluded: limits.monthlyPromoCreditsIncluded,
+        monthlyWhatsappPromoCreditsIncluded: limits.monthlyWhatsappPromoCreditsIncluded,
+        monthlyWhatsappStoryCreditsIncluded: limits.monthlyWhatsappStoryCreditsIncluded,
+        monthlyMarketingEmailCreditsIncluded: limits.monthlyMarketingEmailCreditsIncluded,
+        monthlyShipmentLimit: limits.maxShipmentsPerMonth,
+        teamMembersLimit: limits.maxTeamMembers,
+        whatsappPromoLimit: limits.whatsappPromoLimit,
+        whatsappStoryLimit: limits.whatsappStoryLimit,
       },
     };
+  },
+
+  async getMyCreditHistory(
+    req: AuthRequest,
+    query: { limit?: string; offset?: string; walletType?: string }
+  ) {
+    if (!req.user || !req.user.companyId) {
+      throw new ForbiddenError('User must be associated with a company');
+    }
+
+    const params = parsePagination(query);
+    const walletType = query.walletType as
+      | 'WHATSAPP_PROMO'
+      | 'WHATSAPP_STORY'
+      | 'MARKETING_EMAIL'
+      | undefined;
+
+    const where = {
+      companyId: req.user.companyId,
+      ...(walletType ? { walletType } : {}),
+    };
+
+    const [transactions, total] = await Promise.all([
+      prisma.companyCreditTransaction.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: params.offset,
+        take: params.limit,
+        select: {
+          id: true,
+          walletType: true,
+          type: true,
+          amount: true,
+          reason: true,
+          referenceId: true,
+          createdAt: true,
+        } as any,
+      }),
+      prisma.companyCreditTransaction.count({ where }),
+    ]);
+
+    return createPaginatedResponse(transactions, total, params);
   },
 
   // Team Invitations

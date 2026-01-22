@@ -1306,7 +1306,12 @@ export const adminService = {
     return updated;
   },
 
-  async topupCompanyCredits(companyId: string, amount: number, reason?: string) {
+  async topupCompanyCredits(
+    companyId: string,
+    amount: number,
+    walletType: 'WHATSAPP_PROMO' | 'WHATSAPP_STORY' | 'MARKETING_EMAIL' = 'WHATSAPP_PROMO',
+    reason?: string
+  ) {
     const company = await prisma.company.findUnique({
       where: { id: companyId },
     });
@@ -1315,8 +1320,8 @@ export const adminService = {
       throw new NotFoundError('Company not found');
     }
 
-    const { addPromoCredits } = await import('../billing/usage');
-    await addPromoCredits(companyId, amount, 'TOPUP', reason || 'Admin topup');
+    const { addCredits } = await import('../billing/usage');
+    await addCredits(companyId, walletType, amount, 'TOPUP', reason || 'Admin topup');
 
     const usage = await prisma.companyUsage.findUnique({
       where: { companyId },
@@ -1325,7 +1330,13 @@ export const adminService = {
     return {
       companyId,
       amount,
-      newBalance: usage?.promoCreditsBalance || 0,
+      walletType,
+      newBalance:
+        walletType === 'WHATSAPP_PROMO'
+          ? usage?.whatsappPromoCreditsBalance || 0
+          : walletType === 'WHATSAPP_STORY'
+          ? usage?.whatsappStoryCreditsBalance || 0
+          : usage?.marketingEmailCreditsBalance || 0,
     };
   },
 

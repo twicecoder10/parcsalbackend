@@ -392,6 +392,18 @@ export const companyController = {
     }
   },
 
+  async getMyCreditHistory(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const history = await companyService.getMyCreditHistory(req, req.query);
+      res.status(200).json({
+        status: 'success',
+        ...history,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async getPublicCompanyProfile(req: Request, res: Response, next: NextFunction) {
     try {
       const { companyIdOrSlug } = req.params;

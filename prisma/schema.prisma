@@ -160,6 +160,12 @@ enum CreditTxnType {
   ADJUSTMENT
 }
 
+enum CreditWalletType {
+  WHATSAPP_PROMO
+  WHATSAPP_STORY
+  MARKETING_EMAIL
+}
+
 enum CampaignStatus {
   DRAFT
   SCHEDULED
@@ -731,8 +737,12 @@ model CompanyUsage {
   marketingEmailsSent   Int @default(0)
   whatsappPromoSent     Int @default(0) // Number of WhatsApp promo messages sent this month
   whatsappStoriesPosted Int @default(0) // Number of WhatsApp stories posted this month
-  promoCreditsBalance   Int @default(0) // SMS/WhatsApp credits balance (topups add here)
-  promoCreditsUsed      Int @default(0)
+  whatsappPromoCreditsBalance   Int @default(0)
+  whatsappPromoCreditsUsed      Int @default(0)
+  whatsappStoryCreditsBalance   Int @default(0)
+  whatsappStoryCreditsUsed      Int @default(0)
+  marketingEmailCreditsBalance  Int @default(0)
+  marketingEmailCreditsUsed     Int @default(0)
 
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
@@ -745,6 +755,7 @@ model CompanyUsage {
 model CompanyCreditTransaction {
   id          String        @id @default(cuid())
   companyId   String
+  walletType  CreditWalletType
   type        CreditTxnType
   amount      Int // positive for add, negative for spend
   reason      String?

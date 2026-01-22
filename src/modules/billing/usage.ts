@@ -5,8 +5,26 @@
  */
 
 import prisma from '../../config/database';
-import { CreditTxnType } from '@prisma/client';
+import { CreditTxnType, CreditWalletType } from '@prisma/client';
 import { getPlanEntitlements } from './plans';
+
+const WALLET_FIELDS: Record<
+  CreditWalletType,
+  { balance: 'whatsappPromoCreditsBalance' | 'whatsappStoryCreditsBalance' | 'marketingEmailCreditsBalance'; used: 'whatsappPromoCreditsUsed' | 'whatsappStoryCreditsUsed' | 'marketingEmailCreditsUsed' }
+> = {
+  WHATSAPP_PROMO: {
+    balance: 'whatsappPromoCreditsBalance',
+    used: 'whatsappPromoCreditsUsed',
+  },
+  WHATSAPP_STORY: {
+    balance: 'whatsappStoryCreditsBalance',
+    used: 'whatsappStoryCreditsUsed',
+  },
+  MARKETING_EMAIL: {
+    balance: 'marketingEmailCreditsBalance',
+    used: 'marketingEmailCreditsUsed',
+  },
+};
 
 /**
  * Get the start of the current month period
@@ -63,7 +81,11 @@ export async function ensureCurrentUsagePeriod(companyId: string): Promise<void>
 
   const plan = company.plan;
   const entitlements = getPlanEntitlements(plan);
-  const monthlyCredits = entitlements.monthlyPromoCreditsIncluded;
+  const monthlyWalletCredits: Array<{ walletType: CreditWalletType; amount: number }> = [
+    { walletType: 'WHATSAPP_PROMO', amount: entitlements.monthlyWhatsappPromoCreditsIncluded },
+    { walletType: 'WHATSAPP_STORY', amount: entitlements.monthlyWhatsappStoryCreditsIncluded },
+    { walletType: 'MARKETING_EMAIL', amount: entitlements.monthlyMarketingEmailCreditsIncluded },
+  ];
 
   // Create or update usage record in a transaction
   await prisma.$transaction(async (tx) => {
@@ -84,31 +106,37 @@ export async function ensureCurrentUsagePeriod(companyId: string): Promise<void>
         marketingEmailsSent: 0,
         whatsappPromoSent: 0,
         whatsappStoriesPosted: 0,
-        promoCreditsBalance: 0,
-        promoCreditsUsed: 0,
+        whatsappPromoCreditsBalance: 0,
+        whatsappPromoCreditsUsed: 0,
+        whatsappStoryCreditsBalance: 0,
+        whatsappStoryCreditsUsed: 0,
+        marketingEmailCreditsBalance: 0,
+        marketingEmailCreditsUsed: 0,
       },
     });
 
     // Allocate monthly credits if plan includes them
-    if (monthlyCredits > 0) {
-      // Create credit transaction
-      await tx.companyCreditTransaction.create({
-        data: {
-          companyId,
-          type: 'MONTHLY_ALLOCATION',
-          amount: monthlyCredits,
-          reason: `Monthly allocation for ${plan} plan`,
-          referenceId: usage.id,
-        },
-      });
+    for (const wallet of monthlyWalletCredits) {
+      if (wallet.amount > 0 && wallet.amount !== Infinity) {
+        await tx.companyCreditTransaction.create({
+          data: {
+            companyId,
+            walletType: wallet.walletType,
+            type: 'MONTHLY_ALLOCATION',
+            amount: wallet.amount,
+            reason: `Monthly allocation for ${plan} plan`,
+            referenceId: usage.id,
+          },
+        });
 
-      // Update usage balance
-      await tx.companyUsage.update({
-        where: { id: usage.id },
-        data: {
-          promoCreditsBalance: monthlyCredits,
-        },
-      });
+        const fields = WALLET_FIELDS[wallet.walletType];
+        await tx.companyUsage.update({
+          where: { id: usage.id },
+          data: {
+            [fields.balance]: wallet.amount,
+          },
+        });
+      }
     }
   });
 }
@@ -130,11 +158,12 @@ export async function incrementMarketingEmailsSent(companyId: string, count: num
 }
 
 /**
- * Deduct promo credits (SMS/WhatsApp)
+ * Deduct credits for a specific wallet
  * Returns true if deduction was successful, false if insufficient credits
  */
-export async function deductPromoCredits(
+export async function deductCredits(
   companyId: string,
+  walletType: CreditWalletType,
   amount: number,
   referenceId?: string,
   reason?: string
@@ -149,7 +178,10 @@ export async function deductPromoCredits(
     throw new Error(`Usage record not found for company: ${companyId}`);
   }
 
-  if (usage.promoCreditsBalance < amount) {
+  const fields = WALLET_FIELDS[walletType];
+  const currentBalance = usage[fields.balance as keyof typeof usage] as number;
+
+  if (currentBalance < amount) {
     return false; // Insufficient credits
   }
 
@@ -159,6 +191,7 @@ export async function deductPromoCredits(
     await tx.companyCreditTransaction.create({
       data: {
         companyId,
+        walletType,
         type: 'SPEND',
         amount: -amount,
         reason: reason || 'Promo campaign send',
@@ -170,10 +203,10 @@ export async function deductPromoCredits(
     await tx.companyUsage.update({
       where: { companyId },
       data: {
-        promoCreditsBalance: {
+        [fields.balance]: {
           decrement: amount,
         },
-        promoCreditsUsed: {
+        [fields.used]: {
           increment: amount,
         },
       },
@@ -184,10 +217,11 @@ export async function deductPromoCredits(
 }
 
 /**
- * Add promo credits (topup or grant)
+ * Add credits to a specific wallet (topup or grant)
  */
-export async function addPromoCredits(
+export async function addCredits(
   companyId: string,
+  walletType: CreditWalletType,
   amount: number,
   type: 'TOPUP' | 'GRANT' = 'TOPUP',
   reason?: string,
@@ -195,11 +229,14 @@ export async function addPromoCredits(
 ): Promise<void> {
   await ensureCurrentUsagePeriod(companyId);
 
+  const fields = WALLET_FIELDS[walletType];
+
   await prisma.$transaction(async (tx) => {
     // Create credit transaction
     await tx.companyCreditTransaction.create({
       data: {
         companyId,
+        walletType,
         type: type === 'TOPUP' ? CreditTxnType.TOPUP : CreditTxnType.GRANT,
         amount,
         reason,
@@ -211,12 +248,34 @@ export async function addPromoCredits(
     await tx.companyUsage.update({
       where: { companyId },
       data: {
-        promoCreditsBalance: {
+        [fields.balance]: {
           increment: amount,
         },
       },
     });
   });
+}
+
+/**
+ * Backward-compatible promo credit helpers (WhatsApp promo)
+ */
+export async function deductPromoCredits(
+  companyId: string,
+  amount: number,
+  referenceId?: string,
+  reason?: string
+): Promise<boolean> {
+  return deductCredits(companyId, 'WHATSAPP_PROMO', amount, referenceId, reason);
+}
+
+export async function addPromoCredits(
+  companyId: string,
+  amount: number,
+  type: 'TOPUP' | 'GRANT' = 'TOPUP',
+  reason?: string,
+  referenceId?: string
+): Promise<void> {
+  return addCredits(companyId, 'WHATSAPP_PROMO', amount, type, reason, referenceId);
 }
 
 /**

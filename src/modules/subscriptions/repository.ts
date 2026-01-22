@@ -22,6 +22,25 @@ export const subscriptionRepository = {
     });
   },
 
+  async upsertByStripeSubscriptionId(data: CreateSubscriptionData): Promise<Subscription> {
+    return prisma.subscription.upsert({
+      where: { stripeSubscriptionId: data.stripeSubscriptionId },
+      create: data,
+      update: {
+        companyId: data.companyId,
+        companyPlanId: data.companyPlanId,
+        stripeCustomerId: data.stripeCustomerId,
+        status: data.status,
+        currentPeriodStart: data.currentPeriodStart,
+        currentPeriodEnd: data.currentPeriodEnd,
+      },
+      include: {
+        companyPlan: true,
+        company: true,
+      },
+    });
+  },
+
   async findByCompanyId(companyId: string): Promise<Subscription | null> {
     return prisma.subscription.findFirst({
       where: {

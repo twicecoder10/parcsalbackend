@@ -171,6 +171,7 @@ export const authService = {
         description: dto.companyDescription || null,
         country: dto.companyCountry,
         city: dto.companyCity,
+        contactEmail: dto.email,
         website: dto.companyWebsite || null,
         logoUrl: dto.companyLogoUrl || null,
       }

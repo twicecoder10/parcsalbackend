@@ -55,6 +55,14 @@ router.put(
   subscriptionController.updatePaymentMethod
 );
 
+// Manage subscription in Stripe billing portal (upgrade/downgrade)
+router.post(
+  '/portal',
+  authenticate,
+  requireRole('COMPANY_ADMIN', 'SUPER_ADMIN'),
+  subscriptionController.createSubscriptionPortalSession
+);
+
 // Webhook route (no authentication, verified by Stripe signature)
 // Raw body parser is applied at app level for this route
 router.post(
