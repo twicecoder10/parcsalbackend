@@ -31,10 +31,19 @@ export const proofImageUpload = multer({
   },
 });
 
+export const feedbackImageUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: imageFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB max file size
+    files: 5, // Max 5 files at once for feedback
+  },
+});
+
 // Upload file to Azure Blob Storage
 export async function uploadFile(
   file: Express.Multer.File,
-  type: 'parcel' | 'proof'
+  type: 'parcel' | 'proof' | 'feedback'
 ): Promise<{ filename: string; url: string }> {
   if (!file.buffer) {
     throw new Error('File buffer is required for Azure storage');
@@ -65,7 +74,7 @@ export async function deleteImageFile(filename: string): Promise<void> {
 function isAzureBlobUrl(url: string): boolean {
   return url.includes('.blob.core.windows.net') || 
          url.includes('azure') || 
-         url.match(/(parcel|proof|logo)\//) !== null;
+         url.match(/(parcel|proof|logo|feedback)\//) !== null;
 }
 
 /**
@@ -90,14 +99,21 @@ export function extractFilenameFromUrl(url: string): string | null {
     // Extract pathname and remove leading slash
     const pathname = urlObj.pathname.replace(/^\//, '');
     
-    // Check if pathname contains 'parcel/', 'proof/', or 'logo/'
-    if (pathname.includes('parcel/') || pathname.includes('proof/') || pathname.includes('logo/')) {
+    // Check if pathname contains 'parcel/', 'proof/', 'logo/', or 'feedback/'
+    if (
+      pathname.includes('parcel/') ||
+      pathname.includes('proof/') ||
+      pathname.includes('logo/') ||
+      pathname.includes('feedback/')
+    ) {
       // Return the part after container name (which includes folder name)
       // Path format: container-name/parcel/uuid.jpg or container-name/proof/uuid.jpg
       const parts = pathname.split('/');
       
       // Find the index of 'parcel', 'proof', or 'logo'
-      const folderIndex = parts.findIndex(part => part === 'parcel' || part === 'proof' || part === 'logo');
+      const folderIndex = parts.findIndex(
+        (part) => part === 'parcel' || part === 'proof' || part === 'logo' || part === 'feedback'
+      );
       
       if (folderIndex !== -1) {
         // Return from folder name onwards: "parcel/uuid.jpg", "proof/uuid.jpg", or "logo/uuid.jpg"
@@ -107,7 +123,7 @@ export function extractFilenameFromUrl(url: string): string | null {
     
     // Fallback: try to extract filename from pathname
     // If it's just the filename with folder prefix
-    const filenameMatch = pathname.match(/(parcel|proof|logo)\/.+$/);
+    const filenameMatch = pathname.match(/(parcel|proof|logo|feedback)\/.+$/);
     if (filenameMatch) {
       return filenameMatch[0];
     }
@@ -115,7 +131,7 @@ export function extractFilenameFromUrl(url: string): string | null {
     return null;
   } catch (error) {
     // If URL parsing fails, try to extract filename manually
-    const filenameMatch = url.match(/(parcel|proof|logo)\/[^\/]+\.(jpg|jpeg|png|webp|gif)/i);
+    const filenameMatch = url.match(/(parcel|proof|logo|feedback)\/[^\/]+\.(jpg|jpeg|png|webp|gif)/i);
     return filenameMatch ? filenameMatch[0] : null;
   }
 }

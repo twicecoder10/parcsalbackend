@@ -8,6 +8,7 @@ import prisma from '../../config/database';
 import { onboardingRepository } from '../onboarding/repository';
 import { CarrierPlan, CreditWalletType } from '@prisma/client';
 import { getPlanEntitlements } from '../billing/plans';
+import { captureEvent } from '../../lib/posthog';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -429,6 +430,22 @@ export const subscriptionService = {
         new Date(subscription.current_period_end * 1000)
       );
 
+      const subscriptionAmount = subscription.items?.data?.[0]?.price?.unit_amount ?? null;
+      const planName = plan.carrierPlan || session.metadata?.plan || 'FREE';
+      captureEvent({
+        distinctId: companyId,
+        event: 'subscription_started',
+        properties: {
+          companyId,
+          plan: planName,
+          bookingId: null,
+          shipmentId: null,
+          amount: subscriptionAmount,
+          corridor: null,
+          isFreePlanCommissionApplied: planName === 'FREE',
+        },
+      });
+
       if (currentCompany?.plan && plan.carrierPlan) {
         await grantProratedUpgradeCredits({
           companyId,
@@ -680,6 +697,26 @@ export const subscriptionService = {
             plan: 'FREE',
             planActive: false,
             rankingTier: 'STANDARD', // Reset to FREE plan's ranking tier
+          },
+        });
+
+        const planRecord = await prisma.companyPlan.findUnique({
+          where: { id: dbSubscription.companyPlanId },
+          select: { carrierPlan: true },
+        });
+        const planName = planRecord?.carrierPlan || 'FREE';
+        const subscriptionAmount = subscription.items?.data?.[0]?.price?.unit_amount ?? null;
+        captureEvent({
+          distinctId: dbSubscription.companyId,
+          event: 'subscription_cancelled',
+          properties: {
+            companyId: dbSubscription.companyId,
+            plan: planName,
+            bookingId: null,
+            shipmentId: null,
+            amount: subscriptionAmount,
+            corridor: null,
+            isFreePlanCommissionApplied: planName === 'FREE',
           },
         });
         

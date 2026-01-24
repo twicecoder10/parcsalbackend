@@ -182,6 +182,36 @@ enum AudienceType {
   PLATFORM_ALL_USERS
 }
 
+enum FeedbackType {
+  BUG
+  FEATURE
+  COMPLAINT
+  GENERAL
+}
+
+enum FeedbackApp {
+  WEB
+  MOBILE
+}
+
+enum FeedbackStatus {
+  OPEN
+  IN_REVIEW
+  RESOLVED
+}
+
+enum FeedbackPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ContactStatus {
+  NEW
+  READ
+  RESOLVED
+}
+
 model User {
   id                       String    @id @default(uuid())
   email                    String    @unique
@@ -222,6 +252,7 @@ model User {
   createdExtraCharges BookingExtraCharge[]  @relation("ExtraChargeCreator")
   marketingConsent    MarketingConsent?
   marketingMessages   MarketingMessageLog[]
+  feedbacks           Feedback[]
 
   @@index([email])
   @@index([companyId])
@@ -287,6 +318,7 @@ model Company {
   extraCharges       BookingExtraCharge[]
   usage              CompanyUsage?
   creditTransactions CompanyCreditTransaction[]
+  feedbacks          Feedback[]
 
   @@index([slug])
   @@index([isVerified])
@@ -515,10 +547,38 @@ model Contact {
   subject   String
   message   String
   isRead    Boolean  @default(false)
+  status    ContactStatus @default(NEW)
   createdAt DateTime @default(now())
 
   @@index([email])
   @@index([isRead])
+  @@index([status])
+}
+
+model Feedback {
+  id          String           @id @default(cuid())
+  userId      String?
+  companyId   String?
+  type        FeedbackType
+  rating      Int?
+  message     String
+  pageUrl     String?
+  app         FeedbackApp
+  status      FeedbackStatus   @default(OPEN)
+  priority    FeedbackPriority @default(LOW)
+  attachments Json?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  company Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([companyId])
+  @@index([status])
+  @@index([type])
+  @@index([app])
+  @@index([createdAt])
 }
 
 model TeamInvitation {

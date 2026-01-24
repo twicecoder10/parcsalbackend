@@ -48,7 +48,7 @@ export async function ensureContainerExists(): Promise<void> {
 export async function uploadToAzure(
   buffer: Buffer,
   originalFilename: string,
-  type: 'parcel' | 'proof' | 'label'
+  type: 'parcel' | 'proof' | 'label' | 'feedback'
 ): Promise<{ filename: string; url: string }> {
   await ensureContainerExists();
   

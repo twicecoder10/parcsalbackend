@@ -24,6 +24,7 @@ import reviewRoutes from './modules/reviews/routes';
 import chatRoutes from './modules/chat/routes';
 import connectRoutes from './modules/connect/routes';
 import extraChargeRoutes from './modules/extra-charges/routes';
+import feedbackRoutes from './modules/feedback/routes';
 import { paymentController } from './modules/payments/controller';
 import { billingWebhookController } from './modules/billing/webhook-controller';
 import {
@@ -164,6 +165,7 @@ app.use('/customer/notifications', notificationRoutes);
 app.use('/companies/notifications', notificationRoutes);
 app.use('/uploads', uploadRoutes);
 app.use('/', reviewRoutes); // Reviews routes (includes /bookings/:bookingId/reviews, /companies/:companyId/reviews, etc.)
+app.use('/', feedbackRoutes);
 app.use('/chat', chatRoutes); // Chat routes
 app.use('/connect', connectRoutes); // Stripe Connect routes
 app.use('/', extraChargeRoutes); // Extra charges routes (includes /bookings/:bookingId/extra-charges)

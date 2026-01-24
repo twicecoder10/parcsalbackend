@@ -20,6 +20,7 @@ import { generateBookingId } from '../../utils/bookingId';
 import { deleteImagesByUrls } from '../../utils/upload';
 import { generateShippingLabel } from '../../utils/labelGenerator';
 import { calculateBookingCharges } from '../../utils/paymentCalculator';
+import { captureEvent } from '../../lib/posthog';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -317,6 +318,30 @@ export const bookingService = {
         console.error('Failed to create notification:', err);
       });
     }
+
+    const companyPlan = booking.companyId
+      ? await prisma.company.findUnique({
+          where: { id: booking.companyId },
+          select: { plan: true },
+        })
+      : null;
+    const plan = companyPlan?.plan || 'FREE';
+    const corridor = bookingWithRelations?.shipmentSlot
+      ? `${bookingWithRelations.shipmentSlot.originCity} -> ${bookingWithRelations.shipmentSlot.destinationCity}`
+      : `${shipmentSlot.originCity} -> ${shipmentSlot.destinationCity}`;
+
+    captureEvent({
+      distinctId: req.user.id || booking.companyId || booking.customerId,
+      event: 'booking_created',
+      properties: {
+        companyId: booking.companyId,
+        plan,
+        bookingId: booking.id,
+        amount: Number(booking.calculatedPrice),
+        corridor,
+        isFreePlanCommissionApplied: plan === 'FREE',
+      },
+    });
 
     return booking;
   },

@@ -41,12 +41,16 @@ import {
   getCompanyUsageSchema,
   runMonthlyRolloverSchema,
 } from './dto';
+import contactAdminRoutes from '../contactAdmin/contactAdmin.routes';
 
 const router = Router();
 
 // All admin routes require SUPER_ADMIN role
 router.use(authenticate);
 router.use(requireRole('SUPER_ADMIN'));
+
+// Contact messages inbox
+router.use('/contact-messages', contactAdminRoutes);
 
 // Dashboard
 router.get('/dashboard/summary', adminController.getDashboardSummary);

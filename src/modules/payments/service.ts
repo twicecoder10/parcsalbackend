@@ -10,6 +10,7 @@ import { createNotification, createCompanyNotification } from '../../utils/notif
 import { emailService } from '../../config/email';
 import { generatePaymentId } from '../../utils/paymentId';
 import { calculateBookingCharges } from '../../utils/paymentCalculator';
+import { captureEvent } from '../../lib/posthog';
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -202,6 +203,19 @@ export const paymentService = {
         }
       }
     }
+
+    captureEvent({
+      distinctId: req.user.id || booking.companyId || booking.customerId,
+      event: 'payment_started',
+      properties: {
+        companyId: booking.companyId,
+        plan: companyPlan,
+        bookingId: booking.id,
+        amount: charges.totalAmount,
+        corridor: `${booking.shipmentSlot.originCity} -> ${booking.shipmentSlot.destinationCity}`,
+        isFreePlanCommissionApplied: companyPlan === 'FREE',
+      },
+    });
 
     return {
       sessionId: session.id,

@@ -12,6 +12,7 @@ import { emailService } from '../../config/email';
 import { checkStaffPermission } from '../../utils/permissions';
 import { getMaxShipmentsPerMonth } from '../billing/planConfig';
 import { ensureCurrentUsagePeriod, getCompanyUsage, incrementShipmentsCreated } from '../billing/usage';
+import { captureEvent } from '../../lib/posthog';
 
 export const shipmentService = {
   async createShipment(req: AuthRequest, dto: CreateShipmentDto) {
@@ -43,6 +44,17 @@ export const shipmentService = {
     const maxShipments = getMaxShipmentsPerMonth(company);
     
     if (usage && maxShipments !== Infinity && usage.shipmentsCreated >= maxShipments) {
+      captureEvent({
+        distinctId: req.user.id || company.id,
+        event: 'limit_reached_shipment',
+        properties: {
+          companyId: company.id,
+          plan: company.plan,
+          corridor: `${dto.originCity} -> ${dto.destinationCity}`,
+          isFreePlanCommissionApplied: company.plan === 'FREE',
+          limitType: 'monthly_shipments',
+        },
+      });
       throw new ForbiddenError(
         `You've reached your monthly shipment limit. Upgrade to Starter or Professional to remove limits and pay 0% commission.`
       );
@@ -53,6 +65,17 @@ export const shipmentService = {
       const maxSlots = company.activePlan.maxActiveShipmentSlots;
 
       if (maxSlots !== null && activeCount >= maxSlots) {
+        captureEvent({
+          distinctId: req.user.id || company.id,
+          event: 'limit_reached_shipment',
+          properties: {
+            companyId: company.id,
+            plan: company.plan,
+            corridor: `${dto.originCity} -> ${dto.destinationCity}`,
+            isFreePlanCommissionApplied: company.plan === 'FREE',
+            limitType: 'active_slots',
+          },
+        });
         throw new BadRequestError(
           `Plan limit reached. Maximum ${maxSlots} active shipment slots allowed.`
         );
@@ -150,6 +173,43 @@ export const shipmentService = {
       // Log error but don't fail shipment creation
       console.error('Failed to increment shipment creation count:', err);
     });
+
+    const pricingAmount =
+      shipment.pricingModel === 'FLAT'
+        ? shipment.flatPrice
+        : shipment.pricingModel === 'PER_KG'
+          ? shipment.pricePerKg
+          : shipment.pricePerItem;
+    const amount = pricingAmount !== null && pricingAmount !== undefined ? Number(pricingAmount) : null;
+    const corridor = `${shipment.originCity} -> ${shipment.destinationCity}`;
+
+    captureEvent({
+      distinctId: req.user.id || company.id,
+      event: 'shipment_created',
+      properties: {
+        companyId: company.id,
+        plan: company.plan,
+        shipmentId: shipment.id,
+        amount,
+        corridor,
+        isFreePlanCommissionApplied: company.plan === 'FREE',
+      },
+    });
+
+    if (shipment.status === 'PUBLISHED') {
+      captureEvent({
+        distinctId: req.user.id || company.id,
+        event: 'shipment_published',
+        properties: {
+          companyId: company.id,
+          plan: company.plan,
+          shipmentId: shipment.id,
+          amount,
+          corridor,
+          isFreePlanCommissionApplied: company.plan === 'FREE',
+        },
+      });
+    }
 
     // Mark onboarding step as complete if this is the first shipment
     if (isFirstShipment) {
@@ -355,6 +415,34 @@ export const shipmentService = {
       ).catch((err) => {
         console.error('Failed to create shipment published notifications:', err);
       });
+
+      if (oldStatus !== 'PUBLISHED') {
+        const companyPlan = await prisma.company.findUnique({
+          where: { id: shipment.companyId },
+          select: { plan: true },
+        });
+        const plan = companyPlan?.plan || 'FREE';
+        const pricingAmount =
+          shipment.pricingModel === 'FLAT'
+            ? shipment.flatPrice
+            : shipment.pricingModel === 'PER_KG'
+              ? shipment.pricePerKg
+              : shipment.pricePerItem;
+        const amount = pricingAmount !== null && pricingAmount !== undefined ? Number(pricingAmount) : null;
+
+        captureEvent({
+          distinctId: req.user.id || shipment.companyId,
+          event: 'shipment_published',
+          properties: {
+            companyId: shipment.companyId,
+            plan,
+            shipmentId: shipment.id,
+            amount,
+            corridor: `${shipment.originCity} -> ${shipment.destinationCity}`,
+            isFreePlanCommissionApplied: plan === 'FREE',
+          },
+        });
+      }
     }
 
     // Notify customers when shipment is closed
