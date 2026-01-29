@@ -399,6 +399,7 @@ model ShipmentSlot {
   @@index([destinationCountry, destinationCity])
   @@index([departureTime])
   @@index([status])
+  @@index([status, updatedAt])
 }
 
 model Booking {

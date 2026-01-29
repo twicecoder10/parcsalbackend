@@ -27,6 +27,7 @@ import extraChargeRoutes from './modules/extra-charges/routes';
 import feedbackRoutes from './modules/feedback/routes';
 import { paymentController } from './modules/payments/controller';
 import { billingWebhookController } from './modules/billing/webhook-controller';
+import publicSeoRoutes from './modules/publicSeo/publicSeo.routes';
 import {
   adminRouter as marketingAdminRoutes,
   companyRouter as marketingCompanyRoutes,
@@ -173,6 +174,7 @@ app.use('/admin/marketing', marketingAdminRoutes); // Admin marketing routes
 app.use('/companies/marketing', marketingCompanyRoutes); // Company marketing routes
 app.use('/me', marketingConsentRoutes); // User consent routes
 app.use('/marketing', marketingPublicRoutes); // Public marketing routes (unsubscribe)
+app.use('/public/seo', publicSeoRoutes);
 
 // Error handling middleware (must be last)
 app.use(errorHandler);
