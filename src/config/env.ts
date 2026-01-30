@@ -61,6 +61,13 @@ export const config = {
     containerName: process.env.AZURE_STORAGE_CONTAINER_NAME || 'parcsal-uploads',
     cdnUrl: process.env.AZURE_STORAGE_CDN_URL || '', // Optional CDN URL for serving images
   },
+  tracking: {
+    deliveredRequirement: (process.env.TRACKING_DELIVERED_REQUIREMENT || 'EVIDENCE_OR_NOTE') as
+      | 'EVIDENCE'
+      | 'NOTE'
+      | 'EVIDENCE_OR_NOTE'
+      | 'NONE',
+  },
 };
 
 // Validate required environment variables

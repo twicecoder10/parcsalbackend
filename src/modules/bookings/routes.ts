@@ -11,6 +11,8 @@ import {
   listBookingsSchema,
   addProofImagesSchema,
   scanBarcodeSchema,
+  addBookingTrackingEventSchema,
+  getBookingTrackingSchema,
 } from './dto';
 
 const router = Router();
@@ -94,6 +96,23 @@ router.post(
   authenticate,
   requireCompanyAccess,
   bookingController.rejectBooking
+);
+
+// Booking tracking (company updates)
+router.post(
+  '/:id/tracking',
+  authenticate,
+  requireCompanyAccess,
+  validate(addBookingTrackingEventSchema),
+  bookingController.addBookingTrackingEvent
+);
+
+// Booking tracking timeline (company or customer view)
+router.get(
+  '/:id/tracking',
+  authenticate,
+  validate(getBookingTrackingSchema),
+  bookingController.getBookingTrackingTimeline
 );
 
 router.get(

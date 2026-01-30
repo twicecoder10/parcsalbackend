@@ -6,13 +6,96 @@ import { parsePagination, createPaginatedResponse } from '../../utils/pagination
 import prisma from '../../config/database';
 import { onboardingRepository } from '../onboarding/repository';
 import { bookingRepository } from '../bookings/repository';
-import { BookingStatus } from '@prisma/client';
+import { BookingStatus, BookingTrackingStatus, SlotTrackingStatus } from '@prisma/client';
 import { createShipmentCustomerNotifications } from '../../utils/notifications';
 import { emailService } from '../../config/email';
 import { checkStaffPermission } from '../../utils/permissions';
 import { getMaxShipmentsPerMonth } from '../billing/planConfig';
 import { ensureCurrentUsagePeriod, getCompanyUsage, incrementShipmentsCreated } from '../billing/usage';
 import { captureEvent } from '../../lib/posthog';
+
+const slotTrackingToBookingTracking: Partial<
+  Record<
+    SlotTrackingStatus,
+    { status: BookingTrackingStatus; eligibleStatuses: BookingTrackingStatus[] }
+  >
+> = {
+  IN_TRANSIT: {
+    status: 'IN_TRANSIT',
+    eligibleStatuses: ['BOOKED', 'ITEM_RECEIVED', 'PACKED', 'READY_FOR_DISPATCH'],
+  },
+  ARRIVED_AT_DESTINATION: {
+    status: 'ARRIVED_AT_DESTINATION',
+    eligibleStatuses: ['IN_TRANSIT'],
+  },
+  DELAYED: {
+    status: 'DELAYED',
+    eligibleStatuses: [
+      'BOOKED',
+      'ITEM_RECEIVED',
+      'PACKED',
+      'READY_FOR_DISPATCH',
+      'IN_TRANSIT',
+      'ARRIVED_AT_DESTINATION',
+      'OUT_FOR_DELIVERY',
+    ],
+  },
+  DELIVERED: {
+    status: 'DELIVERED',
+    eligibleStatuses: ['OUT_FOR_DELIVERY', 'IN_TRANSIT'],
+  },
+};
+
+async function appendBookingTrackingEventsFromSlot(
+  shipmentSlotId: string,
+  trackingStatus: SlotTrackingStatus,
+  createdById?: string | null
+) {
+  const mapping = slotTrackingToBookingTracking[trackingStatus];
+  if (!mapping) {
+    return;
+  }
+
+  // Exclude bookings in final states - never update tracking for final bookings
+  const finalStates: BookingStatus[] = ['DELIVERED', 'CANCELLED', 'REJECTED'];
+
+  const bookings = await prisma.booking.findMany({
+    where: {
+      shipmentSlotId,
+      trackingStatus: { in: mapping.eligibleStatuses },
+      // Exclude bookings in final states
+      status: {
+        notIn: finalStates,
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  await Promise.allSettled(
+    bookings.map((booking) =>
+      prisma.$transaction(async (tx) => {
+        const event = await tx.bookingTrackingEvent.create({
+          data: {
+            bookingId: booking.id,
+            status: mapping.status,
+            note: `Auto-updated from shipment slot tracking: ${trackingStatus}`,
+            createdById: createdById || null,
+          },
+        });
+
+        await tx.booking.update({
+          where: { id: booking.id },
+          data: {
+            trackingStatus: mapping.status,
+            trackingUpdatedAt: event.createdAt,
+          },
+        });
+      })
+    )
+  );
+}
 
 export const shipmentService = {
   async createShipment(req: AuthRequest, dto: CreateShipmentDto) {
@@ -479,6 +562,28 @@ export const shipmentService = {
       throw new ForbiddenError('You do not have permission to update this shipment');
     }
 
+    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+
+    // Check if updating to DELIVERED would affect bookings that are already in final states
+    // This is a safety check - the actual update logic will exclude final states
+    if (dto.trackingStatus === 'DELIVERED' && !isSuperAdmin) {
+      const finalStateBookings = await prisma.booking.count({
+        where: {
+          shipmentSlotId: id,
+          status: {
+            in: ['DELIVERED', 'CANCELLED', 'REJECTED'],
+          },
+        },
+      });
+
+      if (finalStateBookings > 0) {
+        // This is just a warning - we'll still proceed but only update eligible bookings
+        console.warn(
+          `Updating slot ${id} to DELIVERED: ${finalStateBookings} booking(s) in final states will be excluded from update`
+        );
+      }
+    }
+
     // Update the slot's tracking status
     const updatedShipment = await shipmentRepository.updateTrackingStatus(id, dto.trackingStatus);
 
@@ -528,6 +633,11 @@ export const shipmentService = {
         // Don't throw - allow the tracking status update to succeed even if booking update fails
       }
     }
+
+    // Append booking-level tracking events (do not overwrite booking status)
+    appendBookingTrackingEventsFromSlot(id, dto.trackingStatus, req.user?.id).catch((error) => {
+      console.error(`Failed to append booking tracking events for slot ${id}:`, error);
+    });
 
     // Notify customers about tracking updates
     const trackingMessages: Record<string, { title: string; body: string }> = {

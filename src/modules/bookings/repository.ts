@@ -15,6 +15,8 @@ export interface CreateBookingData {
   notes?: string | null;
   status: BookingStatus;
   paymentStatus: 'PENDING' | 'PAID' | 'REFUNDED';
+  trackingStatus?: 'BOOKED' | 'ITEM_RECEIVED' | 'PACKED' | 'READY_FOR_DISPATCH' | 'IN_TRANSIT' | 'ARRIVED_AT_DESTINATION' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'DELAYED' | 'CUSTOMS_HOLD' | 'CUSTOMS_CLEARED' | 'DELIVERY_FAILED' | 'DAMAGED' | 'LOST' | 'RETURNED' | 'CANCELLED';
+  trackingUpdatedAt?: Date | null;
   // New parcel information fields
   parcelType?: 'DOCUMENT' | 'PACKAGE' | 'FRAGILE' | 'ELECTRONICS' | 'CLOTHING' | 'FOOD' | 'MEDICINE' | 'OTHER' | null;
   weight?: number | null;
@@ -368,9 +370,22 @@ export const bookingRepository = {
     status: BookingStatus,
     filterStatuses?: BookingStatus[]
   ): Promise<{ count: number }> {
-    const where: any = { shipmentSlotId };
+    // Always exclude final states from bulk updates
+    const finalStates: BookingStatus[] = ['DELIVERED', 'CANCELLED', 'REJECTED'];
+    
+    const where: any = { 
+      shipmentSlotId,
+      // Exclude final states - never update bookings in final states
+      status: {
+        notIn: finalStates,
+      },
+    };
+    
     if (filterStatuses && filterStatuses.length > 0) {
-      where.status = { in: filterStatuses };
+      // Further filter by the provided statuses (but still exclude final states)
+      where.status = { 
+        in: filterStatuses.filter(s => !finalStates.includes(s)),
+      };
     }
 
     const result = await prisma.booking.updateMany({

@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { bookingService } from './service';
-import { CreateBookingDto, UpdateBookingStatusDto, AddProofImagesDto, ScanBarcodeDto } from './dto';
+import { CreateBookingDto, UpdateBookingStatusDto, AddProofImagesDto, ScanBarcodeDto, AddBookingTrackingEventDto } from './dto';
 import { AuthRequest } from '../../middleware/auth';
 
 export const bookingController = {
@@ -172,6 +172,67 @@ export const bookingController = {
         status: 'success',
         data: booking,
         message: 'Barcode scanned successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async addBookingTrackingEvent(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const dto = req.body as AddBookingTrackingEventDto;
+      const event = await bookingService.addBookingTrackingEvent(req, id, dto);
+
+      res.status(201).json({
+        status: 'success',
+        data: event,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getBookingTrackingTimeline(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const timeline = await bookingService.getBookingTrackingTimeline(req, id);
+
+      res.status(200).json({
+        status: 'success',
+        data: timeline,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getPublicBookingTrackingTimeline(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const { id } = req.params;
+      const timeline = await bookingService.getPublicBookingTrackingTimeline(id);
+
+      res.status(200).json({
+        status: 'success',
+        data: timeline,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getPublicBookingTrackingTimelineFromQuery(
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const id = (req.query.id || req.query.bookingId) as string;
+      const timeline = await bookingService.getPublicBookingTrackingTimeline(id);
+
+      res.status(200).json({
+        status: 'success',
+        data: timeline,
       });
     } catch (error) {
       next(error);

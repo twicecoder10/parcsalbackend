@@ -89,6 +89,25 @@ enum SlotTrackingStatus {
   DELIVERED
 }
 
+enum BookingTrackingStatus {
+  BOOKED
+  ITEM_RECEIVED
+  PACKED
+  READY_FOR_DISPATCH
+  IN_TRANSIT
+  ARRIVED_AT_DESTINATION
+  OUT_FOR_DELIVERY
+  DELIVERED
+  DELAYED
+  CUSTOMS_HOLD
+  CUSTOMS_CLEARED
+  DELIVERY_FAILED
+  DAMAGED
+  LOST
+  RETURNED
+  CANCELLED
+}
+
 enum ParcelType {
   DOCUMENT
   PACKAGE
@@ -461,6 +480,8 @@ model Booking {
   deliveryProofImages  String[]          @default([]) // Array of proof of delivery image URLs
   // Label for printing
   labelUrl             String? // URL to the printable shipping label PDF
+  trackingStatus       BookingTrackingStatus @default(BOOKED)
+  trackingUpdatedAt    DateTime?
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
 
@@ -469,11 +490,27 @@ model Booking {
   review       Review?
   chatRoom     ChatRoom?
   extraCharges BookingExtraCharge[]
+  trackingEvents BookingTrackingEvent[]
 
   @@index([customerId])
   @@index([companyId])
   @@index([shipmentSlotId])
   @@index([status])
+}
+
+model BookingTrackingEvent {
+  id          String                @id @default(cuid())
+  bookingId   String
+  status      BookingTrackingStatus
+  note        String?
+  location    String?
+  evidence    Json?   // [{url,type,name}]
+  createdById String? // company user id
+  createdAt   DateTime @default(now())
+
+  booking     Booking @relation(fields: [bookingId], references: [id])
+
+  @@index([bookingId, createdAt])
 }
 
 model Payment {

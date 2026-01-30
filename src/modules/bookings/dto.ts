@@ -2,6 +2,24 @@ import { z } from 'zod';
 import { bookingIdValidator } from '../../utils/validators';
 
 const bookingStatusEnum = z.enum(['PENDING', 'ACCEPTED', 'REJECTED', 'CANCELLED', 'IN_TRANSIT', 'DELIVERED']);
+const bookingTrackingStatusEnum = z.enum([
+  'BOOKED',
+  'ITEM_RECEIVED',
+  'PACKED',
+  'READY_FOR_DISPATCH',
+  'IN_TRANSIT',
+  'ARRIVED_AT_DESTINATION',
+  'OUT_FOR_DELIVERY',
+  'DELIVERED',
+  'DELAYED',
+  'CUSTOMS_HOLD',
+  'CUSTOMS_CLEARED',
+  'DELIVERY_FAILED',
+  'DAMAGED',
+  'LOST',
+  'RETURNED',
+  'CANCELLED',
+]);
 
 const parcelTypeEnum = z.enum(['DOCUMENT', 'PACKAGE', 'FRAGILE', 'ELECTRONICS', 'CLOTHING', 'FOOD', 'MEDICINE', 'OTHER']);
 const pickupMethodEnum = z.enum(['PICKUP_FROM_SENDER', 'DROP_OFF_AT_COMPANY']);
@@ -103,6 +121,50 @@ export const addProofImagesSchema = z.object({
   }),
 });
 
+const bookingTrackingEvidenceSchema = z.array(
+  z.object({
+    url: z.string().url('Invalid evidence URL'),
+    type: z.string().optional(),
+    name: z.string().optional(),
+  })
+).optional().nullable();
+
+export const addBookingTrackingEventSchema = z.object({
+  params: z.object({
+    id: bookingIdValidator,
+  }),
+  body: z.object({
+    status: bookingTrackingStatusEnum,
+    note: z.string().optional().nullable(),
+    location: z.string().optional().nullable(),
+    evidence: bookingTrackingEvidenceSchema,
+  }),
+});
+
+export const getBookingTrackingSchema = z.object({
+  params: z.object({
+    id: bookingIdValidator,
+  }),
+});
+
+export const getPublicBookingTrackingSchema = z.object({
+  params: z.object({
+    id: bookingIdValidator,
+  }),
+});
+
+export const getPublicBookingTrackingQuerySchema = z.object({
+  query: z
+    .object({
+      id: bookingIdValidator.optional(),
+      bookingId: bookingIdValidator.optional(),
+    })
+    .refine((data) => Boolean(data.id || data.bookingId), {
+      message: 'Booking id is required',
+      path: ['id'],
+    }),
+});
+
 export const scanBarcodeSchema = z.object({
   body: z.object({
     barcode: z.string().min(1, 'Barcode is required'),
@@ -113,4 +175,5 @@ export type CreateBookingDto = z.infer<typeof createBookingSchema>['body'];
 export type UpdateBookingStatusDto = z.infer<typeof updateBookingStatusSchema>['body'];
 export type AddProofImagesDto = z.infer<typeof addProofImagesSchema>['body'];
 export type ScanBarcodeDto = z.infer<typeof scanBarcodeSchema>['body'];
+export type AddBookingTrackingEventDto = z.infer<typeof addBookingTrackingEventSchema>['body'];
 

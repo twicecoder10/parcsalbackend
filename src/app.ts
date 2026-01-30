@@ -11,6 +11,7 @@ import planRoutes from './modules/plans/routes';
 import companyRoutes from './modules/companies/routes';
 import shipmentRoutes from './modules/shipments/routes';
 import bookingRoutes from './modules/bookings/routes';
+import bookingPublicRoutes from './modules/bookings/public-routes';
 import paymentRoutes from './modules/payments/routes';
 import companyPaymentRoutes from './modules/payments/company-routes';
 import subscriptionRoutes from './modules/subscriptions/routes';
@@ -144,6 +145,7 @@ app.use('/plans', planRoutes);
 // to avoid conflicts with the catch-all :companyIdOrSlug route
 app.use('/companies/shipments', shipmentRoutes);
 app.use('/companies/bookings', bookingRoutes);
+app.use('/company/bookings', bookingRoutes);
 app.use('/companies/payments', companyPaymentRoutes);
 app.use('/companies/subscription', subscriptionRoutes); // Company admin subscription routes (GET /, POST /cancel, PUT /payment-method)
 app.use('/companies/notifications', notificationRoutes);
@@ -175,6 +177,9 @@ app.use('/companies/marketing', marketingCompanyRoutes); // Company marketing ro
 app.use('/me', marketingConsentRoutes); // User consent routes
 app.use('/marketing', marketingPublicRoutes); // Public marketing routes (unsubscribe)
 app.use('/public/seo', publicSeoRoutes);
+app.use('/public', bookingPublicRoutes);
+// Alias routes for backward compatibility / direct access
+app.use('/public', publicSeoRoutes);
 
 // Error handling middleware (must be last)
 app.use(errorHandler);

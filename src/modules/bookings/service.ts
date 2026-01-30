@@ -1,9 +1,10 @@
 import { bookingRepository, CreateBookingData } from './repository';
-import { CreateBookingDto, UpdateBookingStatusDto, AddProofImagesDto } from './dto';
+import { CreateBookingDto, UpdateBookingStatusDto, AddProofImagesDto, AddBookingTrackingEventDto } from './dto';
 import { NotFoundError, ForbiddenError, BadRequestError } from '../../utils/errors';
 import { AuthRequest } from '../../middleware/auth';
 import { parsePagination, createPaginatedResponse } from '../../utils/pagination';
 import prisma from '../../config/database';
+import { BookingTrackingStatus } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { onboardingRepository } from '../onboarding/repository';
 import { createNotification, createCompanyNotification } from '../../utils/notifications';
@@ -21,6 +22,68 @@ import { deleteImagesByUrls } from '../../utils/upload';
 import { generateShippingLabel } from '../../utils/labelGenerator';
 import { calculateBookingCharges } from '../../utils/paymentCalculator';
 import { captureEvent } from '../../lib/posthog';
+
+const bookingTrackingFlow: BookingTrackingStatus[] = [
+  'BOOKED',
+  'ITEM_RECEIVED',
+  'PACKED',
+  'READY_FOR_DISPATCH',
+  'IN_TRANSIT',
+  'ARRIVED_AT_DESTINATION',
+  'OUT_FOR_DELIVERY',
+  'DELIVERED',
+];
+
+const trackingFlowIndex = new Map(
+  bookingTrackingFlow.map((status, index) => [status, index])
+);
+
+function validateTrackingTransition(
+  currentStatus: BookingTrackingStatus,
+  nextStatus: BookingTrackingStatus,
+  allowOverride: boolean
+) {
+  if (currentStatus === nextStatus) {
+    return;
+  }
+
+  if (currentStatus === 'DELIVERED' && nextStatus !== 'DELIVERED' && !allowOverride) {
+    throw new BadRequestError('Cannot move tracking status backwards from DELIVERED without admin override');
+  }
+
+  if (allowOverride) {
+    return;
+  }
+
+  const currentIndex = trackingFlowIndex.get(currentStatus);
+  const nextIndex = trackingFlowIndex.get(nextStatus);
+  if (currentIndex !== undefined && nextIndex !== undefined && nextIndex < currentIndex) {
+    throw new BadRequestError('Invalid tracking status transition');
+  }
+}
+
+function validateDeliveredRequirement(
+  requirement: 'EVIDENCE' | 'NOTE' | 'EVIDENCE_OR_NOTE' | 'NONE',
+  note?: string | null,
+  evidence?: Array<{ url: string; type?: string; name?: string }> | null
+) {
+  if (requirement === 'NONE') {
+    return;
+  }
+
+  const hasNote = Boolean(note && note.trim().length > 0);
+  const hasEvidence = Boolean(evidence && evidence.length > 0);
+
+  if (requirement === 'EVIDENCE' && !hasEvidence) {
+    throw new BadRequestError('Evidence is required for DELIVERED status');
+  }
+  if (requirement === 'NOTE' && !hasNote) {
+    throw new BadRequestError('Note is required for DELIVERED status');
+  }
+  if (requirement === 'EVIDENCE_OR_NOTE' && !hasNote && !hasEvidence) {
+    throw new BadRequestError('Evidence or note is required for DELIVERED status');
+  }
+}
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -190,6 +253,8 @@ export const bookingService = {
         notes: dto.notes || null,
         status: 'PENDING',
         paymentStatus: 'PENDING',
+        trackingStatus: 'BOOKED',
+        trackingUpdatedAt: new Date(),
         // New parcel information fields
         parcelType: dto.parcelType || null,
         weight: dto.weight || null,
@@ -242,6 +307,14 @@ export const bookingService = {
               fullName: true,
             },
           },
+        },
+      });
+
+      await tx.bookingTrackingEvent.create({
+        data: {
+          bookingId: newBooking.id,
+          status: 'BOOKED',
+          note: 'Booking created',
         },
       });
 
@@ -415,11 +488,52 @@ export const bookingService = {
       throw new ForbiddenError('You do not have permission to update this booking');
     }
 
+    // Prevent updates to final states (unless super admin)
+    const finalStates = ['DELIVERED', 'CANCELLED', 'REJECTED'];
+    if (finalStates.includes(booking.status) && !isSuperAdmin) {
+      throw new BadRequestError(`Cannot update booking that is already ${booking.status}. This is a final state.`);
+    }
+
+    // Validate status transitions
+    if (booking.status === dto.status) {
+      // Same status - no change needed, but allow it
+    } else {
+      // Validate forward progression (unless super admin)
+      const statusOrder: Record<string, number> = {
+        PENDING: 0,
+        ACCEPTED: 1,
+        IN_TRANSIT: 2,
+        DELIVERED: 3,
+        REJECTED: 4,
+        CANCELLED: 5,
+      };
+
+      const currentOrder = statusOrder[booking.status] ?? -1;
+      const newOrder = statusOrder[dto.status] ?? -1;
+
+      // Allow transitions to REJECTED or CANCELLED from any state (except final states)
+      if (dto.status === 'REJECTED' || dto.status === 'CANCELLED') {
+        // Allowed - can reject/cancel from any non-final state
+      } else if (!isSuperAdmin && newOrder < currentOrder) {
+        throw new BadRequestError(`Cannot move booking status backwards from ${booking.status} to ${dto.status}`);
+      }
+    }
+
     // Only company can accept/reject bookings
     if (['ACCEPTED', 'REJECTED', 'IN_TRANSIT', 'DELIVERED'].includes(dto.status)) {
       if (!isCompanyOwner && !isSuperAdmin) {
         throw new ForbiddenError('Only the company can update booking to this status');
       }
+    }
+
+    // Cannot accept booking if payment is not completed
+    if (dto.status === 'ACCEPTED' && booking.paymentStatus !== 'PAID') {
+      throw new BadRequestError('Cannot accept booking. Payment has not been completed by the customer.');
+    }
+
+    // Cannot set to DELIVERED if not in a valid previous state
+    if (dto.status === 'DELIVERED' && !['ACCEPTED', 'IN_TRANSIT'].includes(booking.status)) {
+      throw new BadRequestError(`Cannot set booking to DELIVERED from ${booking.status}. Booking must be ACCEPTED or IN_TRANSIT first.`);
     }
 
     const updatedBooking = await bookingRepository.updateStatus(id, dto.status);
@@ -832,6 +946,11 @@ export const bookingService = {
       throw new ForbiddenError('You do not have permission to accept this booking');
     }
 
+    // Prevent accepting bookings in final states
+    if (['DELIVERED', 'CANCELLED', 'REJECTED'].includes(booking.status)) {
+      throw new BadRequestError(`Cannot accept booking that is already ${booking.status}. This is a final state.`);
+    }
+
     if (booking.status !== 'PENDING') {
       throw new BadRequestError('Only pending bookings can be accepted');
     }
@@ -961,6 +1080,11 @@ export const bookingService = {
 
     if (!req.user || !booking.companyId || booking.companyId !== req.user.companyId) {
       throw new ForbiddenError('You do not have permission to reject this booking');
+    }
+
+    // Prevent rejecting bookings in final states
+    if (['DELIVERED', 'CANCELLED', 'REJECTED'].includes(booking.status)) {
+      throw new BadRequestError(`Cannot reject booking that is already ${booking.status}. This is a final state.`);
     }
 
     if (booking.status !== 'PENDING') {
@@ -1193,12 +1317,6 @@ export const bookingService = {
       throw new NotFoundError('Booking not found');
     }
 
-    // Verify booking is in a state that allows adding proof images
-    // Proof images should only be added to accepted or in-transit bookings
-    if (booking.status === 'REJECTED' || booking.status === 'CANCELLED') {
-      throw new BadRequestError('Cannot add proof images to a rejected or cancelled booking');
-    }
-
     // Verify ownership - only company can add proof images
     if (!req.user) {
       throw new ForbiddenError('Authentication required');
@@ -1209,6 +1327,13 @@ export const bookingService = {
 
     if (!isCompanyOwner && !isSuperAdmin) {
       throw new ForbiddenError('You do not have permission to add proof images to this booking');
+    }
+
+    // Verify booking is in a state that allows adding proof images
+    // Proof images should only be added to accepted or in-transit bookings
+    const finalStates = ['REJECTED', 'CANCELLED', 'DELIVERED'];
+    if (finalStates.includes(booking.status) && !isSuperAdmin) {
+      throw new BadRequestError(`Cannot add proof images to a booking that is ${booking.status}. This is a final state.`);
     }
 
     // Validate at least one proof image array is provided
@@ -1325,6 +1450,209 @@ export const bookingService = {
     return !isSuperAdmin
       ? this.sanitizeBookingForCompany(updatedBooking)
       : updatedBooking;
+  },
+
+  async addBookingTrackingEvent(req: AuthRequest, bookingId: string, dto: AddBookingTrackingEventDto) {
+    if (!req.user) {
+      throw new ForbiddenError('Authentication required');
+    }
+
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: {
+        id: true,
+        customerId: true,
+        companyId: true,
+        status: true,
+        trackingStatus: true,
+      },
+    });
+
+    if (!booking) {
+      throw new NotFoundError('Booking not found');
+    }
+
+    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+    const isCompanyUser = ['COMPANY_ADMIN', 'COMPANY_STAFF'].includes(req.user.role);
+
+    if (!isSuperAdmin && (!isCompanyUser || booking.companyId !== req.user.companyId)) {
+      throw new ForbiddenError('You do not have permission to update tracking for this booking');
+    }
+
+    // Prevent adding tracking events to bookings in final states (unless super admin)
+    const finalStates = ['DELIVERED', 'CANCELLED', 'REJECTED'];
+    if (finalStates.includes(booking.status) && !isSuperAdmin) {
+      throw new BadRequestError(`Cannot add tracking events to booking that is ${booking.status}. This is a final state.`);
+    }
+
+    validateTrackingTransition(booking.trackingStatus, dto.status, isSuperAdmin);
+
+    if (dto.status === 'DELIVERED') {
+      validateDeliveredRequirement(config.tracking.deliveredRequirement, dto.note, dto.evidence || null);
+    }
+
+    const event = await prisma.$transaction(async (tx) => {
+      const created = await tx.bookingTrackingEvent.create({
+        data: {
+          bookingId: booking.id,
+          status: dto.status,
+          note: dto.note || null,
+          location: dto.location || null,
+          evidence: dto.evidence || undefined,
+          createdById: req.user?.id || null,
+        },
+      });
+
+      await tx.booking.update({
+        where: { id: booking.id },
+        data: {
+          trackingStatus: dto.status,
+          trackingUpdatedAt: created.createdAt,
+        },
+      });
+
+      return created;
+    });
+
+    createNotification({
+      userId: booking.customerId,
+      type: 'BOOKING_TRACKING_UPDATED',
+      title: 'Tracking update',
+      body: `Your booking is now ${dto.status.replace(/_/g, ' ').toLowerCase()}.`,
+      metadata: {
+        event: 'booking_tracking_updated',
+        bookingId: booking.id,
+        trackingStatus: dto.status,
+      },
+    }).catch((err) => {
+      console.error('Failed to create booking tracking notification:', err);
+    });
+
+    return event;
+  },
+
+  async getBookingTrackingTimeline(req: AuthRequest, bookingId: string) {
+    if (!req.user) {
+      throw new ForbiddenError('Authentication required');
+    }
+
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: {
+        id: true,
+        customerId: true,
+        companyId: true,
+        trackingStatus: true,
+        trackingUpdatedAt: true,
+      },
+    });
+
+    if (!booking) {
+      throw new NotFoundError('Booking not found');
+    }
+
+    const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+    const isCompanyUser = ['COMPANY_ADMIN', 'COMPANY_STAFF'].includes(req.user.role);
+    const isCustomer = req.user.role === 'CUSTOMER';
+
+    if (!isSuperAdmin) {
+      if (isCompanyUser && booking.companyId !== req.user.companyId) {
+        throw new ForbiddenError('You do not have permission to view this booking');
+      }
+      if (isCustomer && booking.customerId !== req.user.id) {
+        throw new ForbiddenError('You do not have permission to view this booking');
+      }
+      if (!isCompanyUser && !isCustomer) {
+        throw new ForbiddenError('You do not have permission to view this booking');
+      }
+    }
+
+    const events = await prisma.bookingTrackingEvent.findMany({
+      where: { bookingId: booking.id },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return {
+      bookingId: booking.id,
+      trackingStatus: booking.trackingStatus,
+      trackingUpdatedAt: booking.trackingUpdatedAt,
+      events,
+    };
+  },
+
+  async getPublicBookingTrackingTimeline(bookingId: string) {
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: {
+        id: true,
+        trackingStatus: true,
+        trackingUpdatedAt: true,
+        shipmentSlot: {
+          select: {
+            id: true,
+            originCountry: true,
+            originCity: true,
+            destinationCountry: true,
+            destinationCity: true,
+            departureTime: true,
+            arrivalTime: true,
+            mode: true,
+            trackingStatus: true,
+            company: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                logoUrl: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!booking) {
+      throw new NotFoundError('Booking not found');
+    }
+
+    const events = await prisma.bookingTrackingEvent.findMany({
+      where: { bookingId: booking.id },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        bookingId: true,
+        status: true,
+        note: true,
+        location: true,
+        createdAt: true,
+      },
+    });
+
+    return {
+      booking: {
+        id: booking.id,
+        trackingStatus: booking.trackingStatus,
+        trackingUpdatedAt: booking.trackingUpdatedAt,
+      },
+      shipment: booking.shipmentSlot ? {
+        id: booking.shipmentSlot.id,
+        originCountry: booking.shipmentSlot.originCountry,
+        originCity: booking.shipmentSlot.originCity,
+        destinationCountry: booking.shipmentSlot.destinationCountry,
+        destinationCity: booking.shipmentSlot.destinationCity,
+        departureTime: booking.shipmentSlot.departureTime,
+        arrivalTime: booking.shipmentSlot.arrivalTime,
+        mode: booking.shipmentSlot.mode,
+        trackingStatus: booking.shipmentSlot.trackingStatus,
+      } : null,
+      company: booking.shipmentSlot?.company || null,
+      timeline: {
+        bookingId: booking.id,
+        trackingStatus: booking.trackingStatus,
+        trackingUpdatedAt: booking.trackingUpdatedAt,
+        events,
+      },
+    };
   },
 
   async scanBarcode(req: AuthRequest, barcode: string) {
