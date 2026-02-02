@@ -36,6 +36,7 @@ export const updateNotificationPreferencesSchema = z.object({
     // Transactional notification preferences
     email: z.boolean().optional(),
     sms: z.boolean().optional(),
+    whatsapp: z.boolean().optional(),
     // Marketing consent preferences (nested structure)
     marketing: z.object({
       emailMarketingOptIn: z.boolean().optional(),

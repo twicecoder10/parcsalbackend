@@ -9,6 +9,7 @@ export interface CreateUserData {
   role: UserRole;
   companyId?: string | null;
   isEmailVerified?: boolean;
+  phoneNumber?: string | null;
 }
 
 export interface CreateCompanyData {

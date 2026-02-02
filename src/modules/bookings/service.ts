@@ -14,6 +14,14 @@ import {
   queueBookingDeliveredEmail,
   queueBookingRejectionEmail,
 } from '../email/queue';
+import {
+  sendCustomerBookingConfirmed,
+  sendCustomerBookingStatus,
+  sendCustomerTrackingUpdate,
+  sendCustomerDelivered,
+  sendCompanyNewBooking,
+  sendCompanyBookingCancelled,
+} from '../whatsapp/notifications';
 import Stripe from 'stripe';
 import { config } from '../../config/env';
 import { checkStaffPermission } from '../../utils/permissions';
@@ -390,7 +398,19 @@ export const bookingService = {
       ).catch((err) => {
         console.error('Failed to create notification:', err);
       });
+
+      // Send WhatsApp notification to company
+      if (booking.companyId) {
+        await sendCompanyNewBooking(booking.id, booking.companyId).catch((err) => {
+          console.error('Failed to send WhatsApp new booking notification to company:', err);
+        });
+      }
     }
+
+    // Send WhatsApp notification to customer (booking created/confirmed)
+    await sendCustomerBookingConfirmed(booking.id, booking.customerId).catch((err) => {
+      console.error('Failed to send WhatsApp booking confirmed notification:', err);
+    });
 
     const companyPlan = booking.companyId
       ? await prisma.company.findUnique({
@@ -664,6 +684,13 @@ export const bookingService = {
             console.error('Failed to queue booking confirmation email:', err);
           });
         }
+      }
+
+      // Send WhatsApp notification to company when booking is cancelled
+      if (dto.status === 'CANCELLED' && booking.companyId) {
+        await sendCompanyBookingCancelled(booking.id, booking.companyId).catch((err) => {
+          console.error('Failed to send WhatsApp booking cancelled notification to company:', err);
+        });
       }
 
       // Send email when booking is cancelled
@@ -1065,6 +1092,11 @@ export const bookingService = {
       console.error('Failed to create customer notification:', err);
     });
 
+    // Send WhatsApp notification to customer
+    await sendCustomerBookingStatus(booking.id, booking.customerId, 'accepted').catch((err) => {
+      console.error('Failed to send WhatsApp booking accepted notification:', err);
+    });
+
     // Sanitize sensitive data for company users
     return this.sanitizeBookingForCompany(updatedBooking);
   },
@@ -1255,6 +1287,11 @@ export const bookingService = {
       },
     }).catch((err) => {
       console.error('Failed to create notification:', err);
+    });
+
+    // Send WhatsApp notification to customer
+    await sendCustomerBookingStatus(booking.id, booking.customerId, 'rejected').catch((err) => {
+      console.error('Failed to send WhatsApp booking rejected notification:', err);
     });
 
     // Clean up booking images (parcel images, pickup proof, delivery proof)
@@ -1527,6 +1564,18 @@ export const bookingService = {
     }).catch((err) => {
       console.error('Failed to create booking tracking notification:', err);
     });
+
+    // Send WhatsApp tracking update notification
+    await sendCustomerTrackingUpdate(booking.id, booking.customerId, dto.status).catch((err) => {
+      console.error('Failed to send WhatsApp tracking update notification:', err);
+    });
+
+    // Send WhatsApp delivered notification if status is DELIVERED
+    if (dto.status === 'DELIVERED') {
+      await sendCustomerDelivered(booking.id, booking.customerId).catch((err) => {
+        console.error('Failed to send WhatsApp delivered notification:', err);
+      });
+    }
 
     return event;
   },

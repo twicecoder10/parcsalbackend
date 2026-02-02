@@ -104,6 +104,7 @@ export const authService = {
       passwordHash,
       fullName: dto.fullName,
       role: 'CUSTOMER',
+      phoneNumber: dto.phone,
     });
 
     // Save verification token

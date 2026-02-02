@@ -68,6 +68,14 @@ export const config = {
       | 'EVIDENCE_OR_NOTE'
       | 'NONE',
   },
+  whatsapp: {
+    enabled: process.env.WHATSAPP_ENABLED === 'true',
+    token: process.env.WHATSAPP_TOKEN || '',
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+    businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || '',
+    verifyToken: process.env.WHATSAPP_VERIFY_TOKEN || '',
+    defaultCountry: process.env.WHATSAPP_DEFAULT_COUNTRY || 'GB',
+  },
 };
 
 // Validate required environment variables

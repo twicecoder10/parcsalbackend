@@ -5,6 +5,7 @@ export const registerCustomerSchema = z.object({
     email: z.string({ required_error: 'Email is required' }).email('Invalid email address'),
     password: z.string({ required_error: 'Password is required' }).min(8, 'Password must be at least 8 characters'),
     fullName: z.string({ required_error: 'Full name is required' }).min(1, 'Full name is required'),
+    phone: z.string({ required_error: 'Phone number is required' }).min(1, 'Phone number is required'),
   }),
 });
 

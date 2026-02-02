@@ -202,6 +202,7 @@ export const customerService = {
       // Transactional notifications
       email: user.notificationEmail,
       sms: user.notificationSMS,
+      whatsapp: user.notificationWhatsapp ?? false,
       // Marketing consent
       marketing: {
         emailMarketingOptIn: marketingConsent.emailMarketingOptIn,
@@ -216,6 +217,7 @@ export const customerService = {
     dto: {
       email?: boolean;
       sms?: boolean;
+      whatsapp?: boolean;
       marketing?: {
         emailMarketingOptIn?: boolean;
         whatsappMarketingOptIn?: boolean;
@@ -240,6 +242,7 @@ export const customerService = {
     const updateData: UpdateCustomerProfileData = {};
     if (dto.email !== undefined) updateData.notificationEmail = dto.email;
     if (dto.sms !== undefined) updateData.notificationSMS = dto.sms;
+    if (dto.whatsapp !== undefined) updateData.notificationWhatsapp = dto.whatsapp;
 
     const updatedUser = await customerRepository.updateProfile(req.user.id, updateData);
 
@@ -288,6 +291,7 @@ export const customerService = {
         // Transactional notifications
         email: updatedUser.notificationEmail,
         sms: updatedUser.notificationSMS,
+        whatsapp: updatedUser.notificationWhatsapp ?? false,
         // Marketing consent
         marketing: {
           emailMarketingOptIn: updatedMarketingConsent.emailMarketingOptIn,

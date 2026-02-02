@@ -9,8 +9,8 @@ export interface UpdateCompanyData {
   city?: string;
   website?: string | null;
   logoUrl?: string | null;
-  contactPhone?: string;
-  contactEmail?: string;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
   address?: string | null;
   state?: string | null;
   postalCode?: string | null;

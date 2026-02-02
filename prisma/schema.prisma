@@ -231,6 +231,19 @@ enum ContactStatus {
   RESOLVED
 }
 
+enum WhatsAppMessageDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum WhatsAppMessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
 model User {
   id                       String    @id @default(uuid())
   email                    String    @unique
@@ -252,6 +265,7 @@ model User {
   preferredShippingMode    String? // VAN, TRUCK, AIR, TRAIN, SHIP, RIDER
   notificationEmail        Boolean   @default(true)
   notificationSMS          Boolean   @default(false)
+  notificationWhatsapp     Boolean   @default(false)
   pushToken                String? // Expo push notification token for mobile app
   onboardingSteps          Json?     @default("{}") // Track onboarding progress: { stepName: { completed: boolean, completedAt?: DateTime } }
   onboardingCompleted      Boolean   @default(false)
@@ -272,6 +286,7 @@ model User {
   marketingConsent    MarketingConsent?
   marketingMessages   MarketingMessageLog[]
   feedbacks           Feedback[]
+  whatsappMessages    WhatsAppMessage[]
 
   @@index([email])
   @@index([companyId])
@@ -338,6 +353,7 @@ model Company {
   usage              CompanyUsage?
   creditTransactions CompanyCreditTransaction[]
   feedbacks          Feedback[]
+  whatsappMessages   WhatsAppMessage[]
 
   @@index([slug])
   @@index([isVerified])
@@ -422,35 +438,35 @@ model ShipmentSlot {
 }
 
 model Booking {
-  id                   String            @id
+  id                   String                @id
   shipmentSlotId       String
-  shipmentSlot         ShipmentSlot      @relation(fields: [shipmentSlotId], references: [id], onDelete: Cascade)
+  shipmentSlot         ShipmentSlot          @relation(fields: [shipmentSlotId], references: [id], onDelete: Cascade)
   customerId           String
-  customer             User              @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customer             User                  @relation(fields: [customerId], references: [id], onDelete: SetNull)
   companyId            String? // Denormalized for easier querying - nullable to preserve bookings when company is deleted
   companyName          String? // Denormalized company name - preserved when company is deleted for customer reference
-  company              Company?          @relation("CompanyBookings", fields: [companyId], references: [id], onDelete: SetNull)
+  company              Company?              @relation("CompanyBookings", fields: [companyId], references: [id], onDelete: SetNull)
   requestedWeightKg    Float?
   requestedItemsCount  Int?
-  calculatedPrice      Decimal           @db.Decimal(10, 2)
+  calculatedPrice      Decimal               @db.Decimal(10, 2)
   // Payment fee breakdown (in minor units - pence)
   baseAmount           Int? // Shipment price in pence
   adminFeeAmount       Int? // Parcsal admin fee in pence (charged to customer)
   processingFeeAmount  Int? // Stripe processing fee in pence
   totalAmount          Int? // Total amount in pence
   commissionAmount     Int? // Commission deducted from company payout (in pence) - FREE plan only
-  status               BookingStatus     @default(PENDING)
-  paymentStatus        PaymentStatus     @default(PENDING)
+  status               BookingStatus         @default(PENDING)
+  paymentStatus        PaymentStatus         @default(PENDING)
   notes                String?
   // New parcel information fields
   parcelType           ParcelType?
   weight               Float? // Actual weight of the parcel (separate from requestedWeightKg for capacity)
-  value                Decimal?          @db.Decimal(10, 2) // Monetary value of the parcel
+  value                Decimal?              @db.Decimal(10, 2) // Monetary value of the parcel
   length               Float? // Length in cm
   width                Float? // Width in cm
   height               Float? // Height in cm
   description          String?
-  images               String[]          @default([]) // Array of image URLs
+  images               String[]              @default([]) // Array of image URLs
   pickupMethod         PickupMethod
   deliveryMethod       DeliveryMethod
   // Pickup address (when pickupMethod is PICKUP_FROM_SENDER)
@@ -463,7 +479,7 @@ model Booking {
   pickupContactPhone   String?
   // Pickup warehouse reference (when pickupMethod is DROP_OFF_AT_COMPANY)
   pickupWarehouseId    String?
-  pickupWarehouse      WarehouseAddress? @relation("PickupWarehouse", fields: [pickupWarehouseId], references: [id], onDelete: SetNull)
+  pickupWarehouse      WarehouseAddress?     @relation("PickupWarehouse", fields: [pickupWarehouseId], references: [id], onDelete: SetNull)
   // Delivery address (when deliveryMethod is DELIVERED_TO_RECEIVER)
   deliveryAddress      String?
   deliveryCity         String?
@@ -474,22 +490,22 @@ model Booking {
   deliveryContactPhone String?
   // Delivery warehouse reference (when deliveryMethod is RECEIVER_PICKS_UP)
   deliveryWarehouseId  String?
-  deliveryWarehouse    WarehouseAddress? @relation("DeliveryWarehouse", fields: [deliveryWarehouseId], references: [id], onDelete: SetNull)
+  deliveryWarehouse    WarehouseAddress?     @relation("DeliveryWarehouse", fields: [deliveryWarehouseId], references: [id], onDelete: SetNull)
   // Proof images for companies
-  pickupProofImages    String[]          @default([]) // Array of proof of pickup image URLs
-  deliveryProofImages  String[]          @default([]) // Array of proof of delivery image URLs
+  pickupProofImages    String[]              @default([]) // Array of proof of pickup image URLs
+  deliveryProofImages  String[]              @default([]) // Array of proof of delivery image URLs
   // Label for printing
   labelUrl             String? // URL to the printable shipping label PDF
   trackingStatus       BookingTrackingStatus @default(BOOKED)
   trackingUpdatedAt    DateTime?
-  createdAt            DateTime          @default(now())
-  updatedAt            DateTime          @updatedAt
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
 
   // Relations
-  payment      Payment?
-  review       Review?
-  chatRoom     ChatRoom?
-  extraCharges BookingExtraCharge[]
+  payment        Payment?
+  review         Review?
+  chatRoom       ChatRoom?
+  extraCharges   BookingExtraCharge[]
   trackingEvents BookingTrackingEvent[]
 
   @@index([customerId])
@@ -504,11 +520,11 @@ model BookingTrackingEvent {
   status      BookingTrackingStatus
   note        String?
   location    String?
-  evidence    Json?   // [{url,type,name}]
+  evidence    Json? // [{url,type,name}]
   createdById String? // company user id
-  createdAt   DateTime @default(now())
+  createdAt   DateTime              @default(now())
 
-  booking     Booking @relation(fields: [bookingId], references: [id])
+  booking Booking @relation(fields: [bookingId], references: [id])
 
   @@index([bookingId, createdAt])
 }
@@ -579,14 +595,14 @@ model Notification {
 }
 
 model Contact {
-  id        String   @id @default(uuid())
+  id        String        @id @default(uuid())
   name      String
   email     String
   subject   String
   message   String
-  isRead    Boolean  @default(false)
+  isRead    Boolean       @default(false)
   status    ContactStatus @default(NEW)
-  createdAt DateTime @default(now())
+  createdAt DateTime      @default(now())
 
   @@index([email])
   @@index([isRead])
@@ -831,16 +847,16 @@ model CompanyUsage {
   periodStart DateTime
   periodEnd   DateTime
 
-  shipmentsCreated      Int @default(0) // Number of shipments created this month
-  marketingEmailsSent   Int @default(0)
-  whatsappPromoSent     Int @default(0) // Number of WhatsApp promo messages sent this month
-  whatsappStoriesPosted Int @default(0) // Number of WhatsApp stories posted this month
-  whatsappPromoCreditsBalance   Int @default(0)
-  whatsappPromoCreditsUsed      Int @default(0)
-  whatsappStoryCreditsBalance   Int @default(0)
-  whatsappStoryCreditsUsed      Int @default(0)
-  marketingEmailCreditsBalance  Int @default(0)
-  marketingEmailCreditsUsed     Int @default(0)
+  shipmentsCreated             Int @default(0) // Number of shipments created this month
+  marketingEmailsSent          Int @default(0)
+  whatsappPromoSent            Int @default(0) // Number of WhatsApp promo messages sent this month
+  whatsappStoriesPosted        Int @default(0) // Number of WhatsApp stories posted this month
+  whatsappPromoCreditsBalance  Int @default(0)
+  whatsappPromoCreditsUsed     Int @default(0)
+  whatsappStoryCreditsBalance  Int @default(0)
+  whatsappStoryCreditsUsed     Int @default(0)
+  marketingEmailCreditsBalance Int @default(0)
+  marketingEmailCreditsUsed    Int @default(0)
 
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
@@ -851,14 +867,14 @@ model CompanyUsage {
 }
 
 model CompanyCreditTransaction {
-  id          String        @id @default(cuid())
+  id          String           @id @default(cuid())
   companyId   String
   walletType  CreditWalletType
   type        CreditTxnType
   amount      Int // positive for add, negative for spend
   reason      String?
   referenceId String? // campaignId, admin adjustment, stripe invoice, etc.
-  createdAt   DateTime      @default(now())
+  createdAt   DateTime         @default(now())
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
@@ -873,4 +889,30 @@ model StripeEvent {
 
   @@index([type])
   @@index([createdAt])
+}
+
+model WhatsAppMessage {
+  id        String                   @id @default(cuid())
+  direction WhatsAppMessageDirection @default(OUTBOUND)
+  status    WhatsAppMessageStatus    @default(QUEUED)
+
+  toPhone       String
+  templateName  String?
+  messageType   String // TEMPLATE | TEXT
+  payload       Json?
+  providerMsgId String?
+  error         String?
+
+  userId    String?
+  companyId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  company Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  @@index([providerMsgId])
+  @@index([companyId, createdAt])
+  @@index([userId, createdAt])
 }

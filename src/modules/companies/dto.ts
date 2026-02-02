@@ -8,6 +8,11 @@ export const updateCompanySchema = z.object({
     city: z.string().min(1).optional(),
     website: z.string().url().optional().or(z.literal('')),
     logoUrl: z.string().url().optional().or(z.literal('')),
+    contactPhone: z.string().optional(),
+    contactEmail: z.string().email('Invalid email address').optional(),
+    address: z.string().optional(),
+    state: z.string().optional(),
+    postalCode: z.string().optional(),
   }),
 });
 

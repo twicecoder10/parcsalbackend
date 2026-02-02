@@ -93,6 +93,11 @@ export const companyService = {
     if (dto.country !== undefined) updateData.country = dto.country;
     if (dto.city !== undefined) updateData.city = dto.city;
     if (dto.website !== undefined) updateData.website = dto.website || null;
+    if (dto.contactPhone !== undefined) updateData.contactPhone = dto.contactPhone || null;
+    if (dto.contactEmail !== undefined) updateData.contactEmail = dto.contactEmail || null;
+    if (dto.address !== undefined) updateData.address = dto.address || null;
+    if (dto.state !== undefined) updateData.state = dto.state || null;
+    if (dto.postalCode !== undefined) updateData.postalCode = dto.postalCode || null;
     
     // Handle logo update and cleanup old logo
     if (dto.logoUrl !== undefined) {
@@ -1323,6 +1328,7 @@ export const companyService = {
       select: {
         notificationEmail: true,
         notificationSMS: true,
+        notificationWhatsapp: true,
       },
     });
 
@@ -1334,6 +1340,7 @@ export const companyService = {
       notifications: {
         email: user?.notificationEmail ?? true,
         sms: user?.notificationSMS ?? false,
+        whatsapp: user?.notificationWhatsapp ?? false,
         bookingUpdates: true, // Default to true, can be made configurable
         shipmentUpdates: true, // Default to true, can be made configurable
       },
@@ -1358,6 +1365,9 @@ export const companyService = {
       }
       if (settings.notifications.sms !== undefined) {
         updateData.notificationSMS = settings.notifications.sms;
+      }
+      if (settings.notifications.whatsapp !== undefined) {
+        updateData.notificationWhatsapp = settings.notifications.whatsapp;
       }
 
       if (Object.keys(updateData).length > 0) {
@@ -1402,6 +1412,7 @@ export const companyService = {
       select: {
         notificationEmail: true,
         notificationSMS: true,
+        notificationWhatsapp: true,
       },
     });
 
@@ -1409,6 +1420,7 @@ export const companyService = {
       notifications: {
         email: user?.notificationEmail ?? true,
         sms: user?.notificationSMS ?? false,
+        whatsapp: user?.notificationWhatsapp ?? false,
         bookingUpdates: settings.notifications?.bookingUpdates ?? true,
         shipmentUpdates: settings.notifications?.shipmentUpdates ?? true,
       },

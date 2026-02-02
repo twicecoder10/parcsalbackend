@@ -11,6 +11,7 @@ export interface UpdateCustomerProfileData {
   preferredShippingMode?: string | null;
   notificationEmail?: boolean;
   notificationSMS?: boolean;
+  notificationWhatsapp?: boolean;
   onboardingCompleted?: boolean;
 }
 
