@@ -14,14 +14,26 @@ export const completeCustomerOnboardingSchema = z.object({
 });
 
 export const updateCustomerProfileSchema = z.object({
-  body: z.object({
-    fullName: z.string().min(1).optional(),
-    email: z.string().email().optional(),
-    phoneNumber: z.string().optional(),
-    city: z.string().optional(),
-    address: z.string().optional().nullable(),
-    country: z.string().optional().nullable(),
-  }),
+  body: z
+    .object({
+      fullName: z.string().min(1).optional(),
+      email: z.string().email().optional(),
+      phoneNumber: z.string().optional(),
+      city: z.string().optional(),
+      address: z.string().optional().nullable(),
+      country: z.string().optional().nullable(),
+      currentPassword: z.string().optional(),
+      newPassword: z.string().min(8, 'New password must be at least 8 characters').optional(),
+    })
+    .refine(
+      (data) => {
+        const hasCurrent = data.currentPassword !== undefined && data.currentPassword !== '';
+        const hasNew = data.newPassword !== undefined && data.newPassword !== '';
+        if (hasCurrent || hasNew) return hasCurrent && hasNew;
+        return true;
+      },
+      { message: 'Both currentPassword and newPassword are required to change password', path: ['newPassword'] }
+    ),
 });
 
 export const changePasswordSchema = z.object({

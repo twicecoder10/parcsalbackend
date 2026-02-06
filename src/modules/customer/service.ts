@@ -7,6 +7,7 @@ import {
 import { AuthRequest } from '../../middleware/auth';
 import { NotFoundError, ForbiddenError, BadRequestError } from '../../utils/errors';
 import { authService } from '../auth/service';
+import { authRepository } from '../auth/repository';
 import prisma from '../../config/database';
 import { bookingRepository } from '../bookings/repository';
 
@@ -90,6 +91,16 @@ export const customerService = {
       if (existingUser) {
         throw new BadRequestError('Email is already taken');
       }
+    }
+
+    // Optional password update (both currentPassword and newPassword required together)
+    if (dto.currentPassword && dto.newPassword) {
+      const isPasswordValid = await authService.comparePassword(dto.currentPassword, user.passwordHash);
+      if (!isPasswordValid) {
+        throw new BadRequestError('Current password is incorrect');
+      }
+      const passwordHash = await authService.hashPassword(dto.newPassword);
+      await authRepository.updatePassword(req.user.id, passwordHash);
     }
 
     const updateData: UpdateCustomerProfileData = {};

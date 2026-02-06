@@ -11,6 +11,7 @@ import {
   VerifyEmailDto,
   ResendVerificationDto,
   AcceptInvitationDto,
+  ChangePasswordDto,
 } from './dto';
 
 export const authController = {
@@ -158,6 +159,19 @@ export const authController = {
       });
     } catch (error) {
       return next(error);
+    }
+  },
+
+  async changePassword(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const dto = req.body as ChangePasswordDto;
+      const result = await authService.changePassword(req, dto);
+      res.status(200).json({
+        status: 'success',
+        message: result.message,
+      });
+    } catch (error) {
+      next(error);
     }
   },
 

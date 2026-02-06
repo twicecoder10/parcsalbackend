@@ -112,6 +112,8 @@ The server will start on `http://localhost:4000`
 - `POST /auth/login` - Login
 - `POST /auth/refresh-token` - Refresh access token
 - `POST /auth/logout` - Logout
+- `GET /auth/me` - Get current user profile (any authenticated user)
+- `POST /auth/change-password` - Change password (any authenticated user: company, super admin). **See [Password Update API](./PASSWORD_UPDATE_API.md) for FE integration.**
 
 ### Plans (Public)
 - `GET /plans` - List all available subscription plans
@@ -142,6 +144,13 @@ The server will start on `http://localhost:4000`
 - `POST /uploads/proof-images` - Upload proof images (company)
 
 **See [Frontend Image Upload Guide](./FRONTEND_IMAGE_UPLOAD_GUIDE.md) for detailed implementation instructions.**
+
+### Customer profile & password
+- `GET /customer/profile` - Get customer profile
+- `PUT /customer/profile` - Update customer profile (supports optional password change via `currentPassword` + `newPassword`)
+- `POST /customer/profile/change-password` - Change password only (customer). Alternatively use `PUT /customer/profile` with password fields.
+
+**See [Password Update API](./PASSWORD_UPDATE_API.md) for request/response details and which endpoint to use per role.**
 
 ### Reviews
 - `POST /customer/bookings/:bookingId/reviews` - Create a review (customer)

@@ -71,6 +71,13 @@ export const acceptInvitationSchema = z.object({
   }),
 });
 
+export const changePasswordSchema = z.object({
+  body: z.object({
+    currentPassword: z.string().min(1, 'Current password is required'),
+    newPassword: z.string().min(8, 'New password must be at least 8 characters'),
+  }),
+});
+
 export type RegisterCustomerDto = z.infer<typeof registerCustomerSchema>['body'];
 export type RegisterCompanyAdminDto = z.infer<typeof registerCompanyAdminSchema>['body'];
 export type LoginDto = z.infer<typeof loginSchema>['body'];
@@ -80,4 +87,5 @@ export type ResetPasswordDto = z.infer<typeof resetPasswordSchema>['body'];
 export type VerifyEmailDto = z.infer<typeof verifyEmailSchema>['body'];
 export type ResendVerificationDto = z.infer<typeof resendVerificationSchema>['body'];
 export type AcceptInvitationDto = z.infer<typeof acceptInvitationSchema>['body'];
+export type ChangePasswordDto = z.infer<typeof changePasswordSchema>['body'];
 

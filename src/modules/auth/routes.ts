@@ -17,6 +17,7 @@ import {
   verifyEmailSchema,
   resendVerificationSchema,
   acceptInvitationSchema,
+  changePasswordSchema,
 } from './dto';
 
 const router = Router();
@@ -82,6 +83,14 @@ router.post(
 
 // Get current user profile
 router.get('/me', authenticate, authController.getMe);
+
+// Change password (any authenticated user: company, super admin, etc.)
+router.post(
+  '/change-password',
+  authenticate,
+  validate(changePasswordSchema),
+  authController.changePassword
+);
 
 // Delete account
 router.delete('/account', authenticate, authController.deleteAccount);

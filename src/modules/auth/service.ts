@@ -11,7 +11,9 @@ import {
   ResetPasswordDto,
   VerifyEmailDto,
   ResendVerificationDto,
+  ChangePasswordDto,
 } from './dto';
+import type { AuthRequest } from '../../middleware/auth';
 import { BadRequestError, UnauthorizedError, ConflictError, NotFoundError } from '../../utils/errors';
 import { generateUniqueSlug } from '../../utils/slug';
 import { generateTokenWithExpiry } from '../../utils/tokens';
@@ -532,6 +534,23 @@ export const authService = {
       },
       tokens,
     };
+  },
+
+  async changePassword(req: AuthRequest, dto: ChangePasswordDto): Promise<{ message: string }> {
+    if (!req.user) {
+      throw new UnauthorizedError('Unauthorized');
+    }
+    const user = await authRepository.findById(req.user.id);
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+    const isPasswordValid = await this.comparePassword(dto.currentPassword, user.passwordHash);
+    if (!isPasswordValid) {
+      throw new BadRequestError('Current password is incorrect');
+    }
+    const passwordHash = await this.hashPassword(dto.newPassword);
+    await authRepository.updatePassword(req.user.id, passwordHash);
+    return { message: 'Password changed successfully' };
   },
 
   async deleteAccount(userId: string, password: string): Promise<{ message: string }> {
