@@ -243,6 +243,11 @@ export const shipmentService = {
       flatPrice: dto.flatPrice,
       cutoffTimeForReceivingItems: new Date(dto.cutoffTimeForReceivingItems),
       status: finalStatus,
+      bookingNotes: dto.bookingNotes ?? null,
+      allowsPickupFromSender: dto.allowsPickupFromSender ?? true,
+      allowsDropOffAtCompany: dto.allowsDropOffAtCompany ?? true,
+      allowsDeliveredToReceiver: dto.allowsDeliveredToReceiver ?? true,
+      allowsReceiverPicksUp: dto.allowsReceiverPicksUp ?? true,
     };
 
     // Check if this is the company's first shipment slot (before creating)
@@ -409,6 +414,23 @@ export const shipmentService = {
     if (dto.flatPrice !== undefined) updateData.flatPrice = dto.flatPrice;
     if (dto.cutoffTimeForReceivingItems !== undefined) {
       updateData.cutoffTimeForReceivingItems = new Date(dto.cutoffTimeForReceivingItems);
+    }
+    if (dto.bookingNotes !== undefined) updateData.bookingNotes = dto.bookingNotes;
+    if (dto.allowsPickupFromSender !== undefined) updateData.allowsPickupFromSender = dto.allowsPickupFromSender;
+    if (dto.allowsDropOffAtCompany !== undefined) updateData.allowsDropOffAtCompany = dto.allowsDropOffAtCompany;
+    if (dto.allowsDeliveredToReceiver !== undefined) updateData.allowsDeliveredToReceiver = dto.allowsDeliveredToReceiver;
+    if (dto.allowsReceiverPicksUp !== undefined) updateData.allowsReceiverPicksUp = dto.allowsReceiverPicksUp;
+
+    // Ensure at least one departure and one destination option remain allowed after update
+    const finalAllowsPickup = dto.allowsPickupFromSender ?? shipment.allowsPickupFromSender;
+    const finalAllowsDropOff = dto.allowsDropOffAtCompany ?? shipment.allowsDropOffAtCompany;
+    const finalAllowsDelivered = dto.allowsDeliveredToReceiver ?? shipment.allowsDeliveredToReceiver;
+    const finalAllowsReceiverPicksUp = dto.allowsReceiverPicksUp ?? shipment.allowsReceiverPicksUp;
+    if (!finalAllowsPickup && !finalAllowsDropOff) {
+      throw new BadRequestError('At least one departure option (pickup from sender or drop off at company) must be allowed');
+    }
+    if (!finalAllowsDelivered && !finalAllowsReceiverPicksUp) {
+      throw new BadRequestError('At least one destination option (delivered to receiver or receiver picks up) must be allowed');
     }
 
     return shipmentRepository.update(id, updateData);

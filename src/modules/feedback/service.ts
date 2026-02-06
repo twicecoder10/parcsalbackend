@@ -8,7 +8,7 @@ import { FeedbackPriority, FeedbackStatus } from '@prisma/client';
 import { SubmitFeedbackDto, ListFeedbackQuery, UpdateFeedbackDto } from './dto';
 import { feedbackRepository } from './repository';
 
-const ADMIN_FEEDBACK_EMAIL = 'support@parcsal.co.uk';
+const ADMIN_FEEDBACK_EMAIL = 'support@parcsal.com';
 
 function buildFeedbackEmailHtml(params: {
   type: string;

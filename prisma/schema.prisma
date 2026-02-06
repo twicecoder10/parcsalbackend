@@ -407,7 +407,7 @@ model ShipmentSlot {
   company                     Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
   originCountry               String
   originCity                  String
-  destinationCountry          String
+  destinationCountry         String
   destinationCity             String
   departureTime               DateTime
   arrivalTime                 DateTime
@@ -423,6 +423,13 @@ model ShipmentSlot {
   cutoffTimeForReceivingItems DateTime
   status                      ShipmentStatus     @default(DRAFT)
   trackingStatus              SlotTrackingStatus @default(PENDING)
+  // Info/notes for customers (rules, conditions, extra charges, etc.)
+  bookingNotes                String?
+  // Pickup/delivery options: which choices customers can make for this slot
+  allowsPickupFromSender      Boolean            @default(true)  // Customer can request company to pick up from sender (departure)
+  allowsDropOffAtCompany      Boolean            @default(true)  // Customer can choose to drop off at company (departure)
+  allowsDeliveredToReceiver   Boolean            @default(true)  // Customer can request delivery to receiver (destination)
+  allowsReceiverPicksUp       Boolean            @default(true)  // Customer can choose receiver picks up from company (destination)
   createdAt                   DateTime           @default(now())
   updatedAt                   DateTime           @updatedAt
 

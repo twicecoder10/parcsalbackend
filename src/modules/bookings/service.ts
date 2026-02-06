@@ -159,6 +159,26 @@ export const bookingService = {
       throw new BadRequestError('Shipment slot is not available for booking');
     }
 
+    // Validate pickup/delivery method is allowed by the slot
+    const allows = {
+      pickupFromSender: (shipmentSlot as { allowsPickupFromSender?: boolean }).allowsPickupFromSender !== false,
+      dropOffAtCompany: (shipmentSlot as { allowsDropOffAtCompany?: boolean }).allowsDropOffAtCompany !== false,
+      deliveredToReceiver: (shipmentSlot as { allowsDeliveredToReceiver?: boolean }).allowsDeliveredToReceiver !== false,
+      receiverPicksUp: (shipmentSlot as { allowsReceiverPicksUp?: boolean }).allowsReceiverPicksUp !== false,
+    };
+    if (dto.pickupMethod === 'PICKUP_FROM_SENDER' && !allows.pickupFromSender) {
+      throw new BadRequestError('This slot does not allow pickup from sender; please choose drop off at company');
+    }
+    if (dto.pickupMethod === 'DROP_OFF_AT_COMPANY' && !allows.dropOffAtCompany) {
+      throw new BadRequestError('This slot does not allow drop off at company; please choose pickup from sender');
+    }
+    if (dto.deliveryMethod === 'DELIVERED_TO_RECEIVER' && !allows.deliveredToReceiver) {
+      throw new BadRequestError('This slot does not allow delivery to receiver; please choose receiver picks up');
+    }
+    if (dto.deliveryMethod === 'RECEIVER_PICKS_UP' && !allows.receiverPicksUp) {
+      throw new BadRequestError('This slot does not allow receiver picks up; please choose delivery to receiver');
+    }
+
     // Validate capacity based on pricing model
     if (shipmentSlot.pricingModel === 'PER_KG') {
       if (!dto.requestedWeightKg || dto.requestedWeightKg <= 0) {

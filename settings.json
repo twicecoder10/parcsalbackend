@@ -1,6 +1,10 @@
 {
   "platformName": "Parcsal",
   "supportEmail": "support@parcsal.com",
+  "supportPhone": "+447344510715",
+  "facebookUrl": "https://www.facebook.com/parcsal",
+  "instagramUrl": "https://www.instagram.com/parcsalcom/",
+  "tiktokUrl": "https://www.tiktok.com/@parcsal",
   "commissionRate": 5,
   "minCommission": 0,
   "maxCommission": 100,

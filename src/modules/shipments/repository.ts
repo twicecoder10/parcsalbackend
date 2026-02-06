@@ -1,5 +1,13 @@
 import prisma from '../../config/database';
-import { ShipmentSlot, ShipmentStatus, ShipmentMode, PricingModel, SlotTrackingStatus } from '@prisma/client';
+import {
+  CarrierPlan,
+  ShipmentSlot,
+  ShipmentStatus,
+  ShipmentMode,
+  PricingModel,
+  SlotTrackingStatus,
+  SubscriptionStatus,
+} from '@prisma/client';
 import { PaginationParams } from '../../utils/pagination';
 
 export interface CreateShipmentData {
@@ -21,6 +29,11 @@ export interface CreateShipmentData {
   flatPrice?: number | null;
   cutoffTimeForReceivingItems: Date;
   status: ShipmentStatus;
+  bookingNotes?: string | null;
+  allowsPickupFromSender?: boolean;
+  allowsDropOffAtCompany?: boolean;
+  allowsDeliveredToReceiver?: boolean;
+  allowsReceiverPicksUp?: boolean;
 }
 
 export interface UpdateShipmentData extends Partial<CreateShipmentData> {
@@ -39,6 +52,21 @@ export interface SearchFilters {
   arrivalTo?: Date;
   minPrice?: number;
   maxPrice?: number;
+}
+
+function carrierPlanWeight(plan: CarrierPlan | null | undefined): number {
+  switch (plan) {
+    case 'ENTERPRISE':
+      return 4;
+    case 'PROFESSIONAL':
+      return 3;
+    case 'STARTER':
+      return 2;
+    case 'FREE':
+      return 1;
+    default:
+      return 0;
+  }
 }
 
 export const shipmentRepository = {
@@ -307,9 +335,7 @@ export const shipmentRepository = {
     // We need to fetch all to apply price filtering, then paginate
     const allShipments = await prisma.shipmentSlot.findMany({
       where,
-      orderBy: {
-        departureTime: 'asc',
-      },
+      orderBy: [{ departureTime: 'asc' }, { createdAt: 'desc' }],
       include: {
         company: {
           select: {
@@ -347,6 +373,62 @@ export const shipmentRepository = {
           return false;
         }
         return true;
+      });
+    }
+
+    // Subscription-based ranking for public shipment lists:
+    // - Prefer companies with an ACTIVE subscription in the current billing period
+    // - Prefer higher subscription tiers (ENTERPRISE > PROFESSIONAL > STARTER > FREE)
+    //
+    // We intentionally DO NOT include subscription data in the shipment payload.
+    // Instead we fetch subscription info separately and sort in-memory (this endpoint already filters in-memory).
+    const uniqueCompanyIds = Array.from(new Set(filteredShipments.map((s) => s.companyId)));
+    if (uniqueCompanyIds.length > 0) {
+      const activeSubs = await prisma.subscription.findMany({
+        where: {
+          companyId: { in: uniqueCompanyIds },
+          status: SubscriptionStatus.ACTIVE,
+          currentPeriodStart: { lte: now },
+          currentPeriodEnd: { gte: now },
+        },
+        select: {
+          companyId: true,
+          companyPlan: {
+            select: {
+              carrierPlan: true,
+              name: true,
+            },
+          },
+        },
+      });
+
+      const companyToPlanWeight = new Map<string, number>();
+      for (const sub of activeSubs) {
+        // Prefer the explicit enum if present; otherwise fall back to plan name ("FREE"/"STARTER"/...)
+        const plan =
+          sub.companyPlan.carrierPlan ??
+          (Object.values(CarrierPlan).includes(sub.companyPlan.name as CarrierPlan)
+            ? (sub.companyPlan.name as CarrierPlan)
+            : null);
+        const weight = carrierPlanWeight(plan);
+        const current = companyToPlanWeight.get(sub.companyId) ?? 0;
+        if (weight > current) {
+          companyToPlanWeight.set(sub.companyId, weight);
+        }
+      }
+
+      filteredShipments.sort((a, b) => {
+        const aWeight = companyToPlanWeight.get(a.companyId) ?? 0;
+        const bWeight = companyToPlanWeight.get(b.companyId) ?? 0;
+        if (aWeight !== bWeight) return bWeight - aWeight; // higher tier first
+
+        const depDiff = a.departureTime.getTime() - b.departureTime.getTime();
+        if (depDiff !== 0) return depDiff; // soonest departure first
+
+        const createdDiff = b.createdAt.getTime() - a.createdAt.getTime();
+        if (createdDiff !== 0) return createdDiff; // newest first
+
+        return a.id.localeCompare(b.id); // stable tie-break
       });
     }
 

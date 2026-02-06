@@ -22,7 +22,20 @@ export const createShipmentSchema = z.object({
     flatPrice: z.number().positive().optional().nullable(),
     cutoffTimeForReceivingItems: z.string().datetime('Invalid cutoff time'),
     status: shipmentStatusEnum.optional().default('DRAFT'),
-  }),
+    // Info/notes for customers (rules, conditions, extra charges, etc.)
+    bookingNotes: z.string().max(5000).optional().nullable(),
+    // Pickup/delivery options: at least one departure and one destination option must be true
+    allowsPickupFromSender: z.boolean().optional().default(true),
+    allowsDropOffAtCompany: z.boolean().optional().default(true),
+    allowsDeliveredToReceiver: z.boolean().optional().default(true),
+    allowsReceiverPicksUp: z.boolean().optional().default(true),
+  }).refine(
+    (data) => data.allowsPickupFromSender || data.allowsDropOffAtCompany,
+    { message: 'At least one departure option (pickup from sender or drop off at company) must be allowed', path: ['allowsPickupFromSender'] }
+  ).refine(
+    (data) => data.allowsDeliveredToReceiver || data.allowsReceiverPicksUp,
+    { message: 'At least one destination option (delivered to receiver or receiver picks up) must be allowed', path: ['allowsDeliveredToReceiver'] }
+  ),
 });
 
 export const updateShipmentSchema = z.object({
@@ -44,7 +57,28 @@ export const updateShipmentSchema = z.object({
     pricePerItem: z.number().positive().optional().nullable(),
     flatPrice: z.number().positive().optional().nullable(),
     cutoffTimeForReceivingItems: z.string().datetime().optional(),
-  }),
+    bookingNotes: z.string().max(5000).optional().nullable(),
+    allowsPickupFromSender: z.boolean().optional(),
+    allowsDropOffAtCompany: z.boolean().optional(),
+    allowsDeliveredToReceiver: z.boolean().optional(),
+    allowsReceiverPicksUp: z.boolean().optional(),
+  }).refine(
+    (data) => {
+      const pickup = data.allowsPickupFromSender;
+      const dropOff = data.allowsDropOffAtCompany;
+      if (pickup === undefined && dropOff === undefined) return true;
+      return (pickup ?? true) || (dropOff ?? true);
+    },
+    { message: 'At least one departure option must be allowed', path: ['allowsPickupFromSender'] }
+  ).refine(
+    (data) => {
+      const delivered = data.allowsDeliveredToReceiver;
+      const picksUp = data.allowsReceiverPicksUp;
+      if (delivered === undefined && picksUp === undefined) return true;
+      return (delivered ?? true) || (picksUp ?? true);
+    },
+    { message: 'At least one destination option must be allowed', path: ['allowsDeliveredToReceiver'] }
+  ),
 });
 
 export const updateShipmentStatusSchema = z.object({

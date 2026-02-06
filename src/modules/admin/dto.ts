@@ -236,6 +236,10 @@ export const updateSettingsSchema = z.object({
   body: z.object({
     platformName: z.string().optional(),
     supportEmail: z.string().email().optional(),
+    supportPhone: z.string().optional(),
+    facebookUrl: z.string().url().optional().or(z.literal('')),
+    instagramUrl: z.string().url().optional().or(z.literal('')),
+    tiktokUrl: z.string().url().optional().or(z.literal('')),
     commissionRate: z.number().min(0).max(100).optional(),
     minCommission: z.number().min(0).optional(),
     maxCommission: z.number().min(0).optional(),

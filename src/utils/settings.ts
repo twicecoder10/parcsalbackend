@@ -5,6 +5,10 @@ import { BadRequestError } from './errors';
 export interface PlatformSettings {
   platformName: string;
   supportEmail: string;
+  supportPhone: string;
+  facebookUrl: string;
+  instagramUrl: string;
+  tiktokUrl: string;
   commissionRate: number;
   minCommission: number;
   maxCommission: number;
@@ -20,6 +24,10 @@ const SETTINGS_FILE = path.join(process.cwd(), 'settings.json');
 const DEFAULT_SETTINGS: PlatformSettings = {
   platformName: 'Parcsal',
   supportEmail: 'support@parcsal.com',
+  supportPhone: '+447344510715',
+  facebookUrl: 'https://www.facebook.com/parcsal',
+  instagramUrl: 'https://www.instagram.com/parcsalcom/',
+  tiktokUrl: 'https://www.tiktok.com/@parcsal',
   commissionRate: 5.0,
   minCommission: 0,
   maxCommission: 100,
@@ -39,8 +47,9 @@ async function loadSettings(): Promise<PlatformSettings> {
 
   try {
     const data = await fs.readFile(SETTINGS_FILE, 'utf-8');
-    cachedSettings = JSON.parse(data);
-    return cachedSettings!;
+    const parsed = JSON.parse(data) as Partial<PlatformSettings>;
+    cachedSettings = { ...DEFAULT_SETTINGS, ...parsed };
+    return cachedSettings;
   } catch (error) {
     // File doesn't exist, use defaults
     cachedSettings = DEFAULT_SETTINGS;
