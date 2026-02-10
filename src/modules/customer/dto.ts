@@ -7,7 +7,7 @@ export const completeCustomerOnboardingSchema = z.object({
     city: z.string().min(1, 'City is required'),
     address: z.string().optional(),
     country: z.string().optional(),
-    preferredShippingMode: z.enum(['VAN', 'TRUCK', 'AIR', 'TRAIN', 'SHIP', 'RIDER']).optional(),
+    preferredShippingMode: z.enum(['AIR_CARGO', 'SEA_CARGO', 'AIR_FREIGHT']).optional(),
     notificationEmail: z.boolean().optional().default(true),
     notificationSMS: z.boolean().optional().default(false),
   }),

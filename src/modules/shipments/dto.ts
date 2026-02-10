@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { bookingIdValidator } from '../../utils/validators';
 
-const shipmentModeEnum = z.enum(['AIR', 'BUS', 'VAN', 'TRAIN', 'SHIP', 'RIDER']);
+const shipmentModeEnum = z.enum(['AIR_CARGO', 'SEA_CARGO', 'AIR_FREIGHT']);
 const pricingModelEnum = z.enum(['PER_KG', 'PER_ITEM', 'FLAT']);
 const shipmentStatusEnum = z.enum(['DRAFT', 'PUBLISHED', 'CLOSED']);
 

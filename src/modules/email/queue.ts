@@ -116,7 +116,7 @@ export const emailWorker = new Worker(
               destinationCountry: '', // Not in job data, but email service expects it
               departureTime: departureTime,
               arrivalTime: new Date(departureTime.getTime() + 24 * 60 * 60 * 1000), // Estimate
-              mode: 'VAN', // Default, not in job data
+              mode: 'AIR_FREIGHT', // Default when not in job data
               price: data.price,
               currency: 'gbp',
             },
@@ -138,7 +138,7 @@ export const emailWorker = new Worker(
               destinationCountry: '',
               departureTime: new Date(),
               arrivalTime: new Date(),
-              mode: 'VAN',
+              mode: 'AIR_FREIGHT',
               price: 0,
               currency: 'gbp',
             },
@@ -160,7 +160,7 @@ export const emailWorker = new Worker(
               destinationCountry: '',
               departureTime: new Date(),
               arrivalTime: new Date(),
-              mode: 'VAN',
+              mode: 'AIR_FREIGHT',
               price: 0,
               currency: 'gbp',
             },
@@ -182,7 +182,7 @@ export const emailWorker = new Worker(
               destinationCountry: '',
               departureTime: new Date(),
               arrivalTime: new Date(),
-              mode: 'VAN',
+              mode: 'AIR_FREIGHT',
               price: 0,
               currency: 'gbp',
             },

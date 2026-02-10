@@ -18,12 +18,9 @@ enum UserRole {
 }
 
 enum ShipmentMode {
-  AIR
-  BUS
-  VAN
-  TRAIN
-  SHIP
-  RIDER
+  AIR_CARGO
+  SEA_CARGO
+  AIR_FREIGHT
 }
 
 enum PricingModel {
@@ -440,6 +437,7 @@ model ShipmentSlot {
   @@index([originCountry, originCity])
   @@index([destinationCountry, destinationCity])
   @@index([departureTime])
+  @@index([mode, departureTime])
   @@index([status])
   @@index([status, updatedAt])
 }
