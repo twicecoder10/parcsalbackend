@@ -12,14 +12,15 @@ import {
   canRunEmailCampaigns
 } from '../billing/planConfig';
 import {
-  ensureCurrentUsagePeriod, 
-  incrementMarketingEmailsSent, 
+  ensureCurrentUsagePeriod,
+  incrementMarketingEmailsSent,
   incrementWhatsappPromoSent,
   incrementWhatsappStoriesPosted,
   deductCredits,
-  getCompanyUsage 
+  getCompanyUsage
 } from '../billing/usage';
 import prisma from '../../config/database';
+import { sendTemplateMessage, safeNoOpIfDisabled } from '../whatsapp/service';
 
 const MAX_RECIPIENTS_COMPANY = 1000;
 const MAX_RECIPIENTS_ADMIN = 10000;
@@ -29,6 +30,7 @@ interface ResolvedRecipient {
   id: string;
   email: string;
   fullName: string;
+  phoneNumber?: string | null;
 }
 
 export const marketingService = {
@@ -568,7 +570,14 @@ export const marketingService = {
       consentFilter
     );
 
-    return usersWithConsent;
+    // For WhatsApp, only include users with a valid phone number
+    if (campaign.channel === 'WHATSAPP') {
+      return usersWithConsent.filter(
+        (u) => u.phoneNumber != null && String(u.phoneNumber).trim().length > 0
+      ) as ResolvedRecipient[];
+    }
+
+    return usersWithConsent as ResolvedRecipient[];
   },
 
   /**
@@ -621,6 +630,9 @@ export const marketingService = {
    * Send campaign message to a single recipient
    */
   async sendToRecipient(campaign: any, recipient: ResolvedRecipient) {
+    let messageLogStatus: string = 'SENT';
+    let messageLogSentAt: Date | undefined = undefined;
+
     try {
       if (campaign.channel === 'EMAIL') {
         await this.sendEmailMessage(campaign, recipient);
@@ -660,14 +672,16 @@ export const marketingService = {
       } else if (campaign.channel === 'IN_APP') {
         await this.sendInAppMessage(campaign, recipient);
       } else if (campaign.channel === 'WHATSAPP') {
-        await this.logWhatsAppMessage(campaign, recipient);
-        
-        // Track WhatsApp usage for company campaigns
+        const result = await this.sendWhatsAppCampaignMessage(campaign, recipient);
+        messageLogStatus = result.sent ? 'SENT' : (result.skippedReason ?? 'FAILED');
+        messageLogSentAt = result.sent ? new Date() : undefined;
+
+        // Track WhatsApp usage for company campaigns (only when actually sent)
         if (campaign.senderType === 'COMPANY' && campaign.senderCompanyId) {
           // Determine if this is a story or promo message (for now, treat all as promo unless specified)
           // TODO: Add campaign metadata field to distinguish story vs promo
           const isStory = false; // Default to promo message
-          
+
           if (isStory) {
             const company = await prisma.company.findUnique({
               where: { id: campaign.senderCompanyId },
@@ -706,16 +720,17 @@ export const marketingService = {
               select: { plan: true },
             });
             
-            if (company) {
+            if (company && result.sent) {
               const usage = await getCompanyUsage(campaign.senderCompanyId);
               const promoLimit = getWhatsappPromoLimit(company);
-              
+
               // Check if we need to deduct credits (before incrementing)
               // FREE plan: always deduct credits
               // Other plans: only deduct if exceeding included limit
-              const shouldDeductCredits = company.plan === 'FREE' || 
+              const shouldDeductCredits =
+                company.plan === 'FREE' ||
                 (promoLimit !== Infinity && usage && usage.whatsappPromoSent >= promoLimit);
-              
+
               if (shouldDeductCredits) {
                 const deducted = await deductCredits(
                   campaign.senderCompanyId,
@@ -724,14 +739,15 @@ export const marketingService = {
                   campaign.id,
                   `WhatsApp promo campaign: ${campaign.id}`
                 );
-                
+
                 if (!deducted) {
-                  // This shouldn't happen as we check before sending, but handle gracefully
-                  console.error(`Failed to deduct credits for campaign ${campaign.id}, recipient ${recipient.id}`);
+                  console.error(
+                    `Failed to deduct credits for campaign ${campaign.id}, recipient ${recipient.id}`
+                  );
                 }
               }
-              
-              // Track promo messages (always increment, regardless of credit deduction)
+
+              // Track promo messages (only when sent)
               await incrementWhatsappPromoSent(campaign.senderCompanyId, 1).catch((err) => {
                 console.error('Failed to increment WhatsApp promo count:', err);
               });
@@ -745,8 +761,8 @@ export const marketingService = {
       const log = logs.find((l) => l.recipientId === recipient.id);
       if (log) {
         await marketingRepository.updateMessageLog(log.id, {
-          status: campaign.channel === 'WHATSAPP' ? 'SKIPPED_NOT_IMPLEMENTED' : 'SENT',
-          sentAt: new Date(),
+          status: messageLogStatus,
+          sentAt: messageLogSentAt ?? (messageLogStatus === 'SENT' ? new Date() : undefined),
         });
       }
     } catch (error) {
@@ -813,12 +829,51 @@ export const marketingService = {
   },
 
   /**
-   * Log WhatsApp message (not sending yet)
+   * Send WhatsApp campaign message via Meta template API
    */
-  async logWhatsAppMessage(_campaign: any, _recipient: ResolvedRecipient) {
-    // Placeholder: WhatsApp integration not implemented
-    // Just log as SKIPPED_NOT_IMPLEMENTED
-    return;
+  async sendWhatsAppCampaignMessage(
+    campaign: any,
+    recipient: ResolvedRecipient
+  ): Promise<{ sent: boolean; skippedReason?: string }> {
+    if (!recipient.phoneNumber || !recipient.phoneNumber.trim()) {
+      return { sent: false, skippedReason: 'SKIPPED_NO_PHONE' };
+    }
+
+    if (safeNoOpIfDisabled()) {
+      return { sent: false, skippedReason: 'SKIPPED_NOT_IMPLEMENTED' };
+    }
+
+    const templateName = campaign.whatsappTemplateKey?.trim();
+    if (!templateName) {
+      return { sent: false, skippedReason: 'SKIPPED_NOT_IMPLEMENTED' };
+    }
+
+    // Meta template body parameter max length (single segment)
+    const BODY_PARAM_MAX_LENGTH = 1024;
+    const bodyText = (campaign.contentText || '').trim().slice(0, BODY_PARAM_MAX_LENGTH);
+
+    try {
+      await sendTemplateMessage({
+        toPhone: recipient.phoneNumber,
+        templateName,
+        languageCode: config.whatsapp.defaultCountry === 'GB' ? 'en_GB' : 'en',
+        components: [
+          {
+            type: 'body',
+            parameters: [{ type: 'text', text: bodyText }],
+          },
+        ],
+        userId: recipient.id,
+        companyId: campaign.senderCompanyId || undefined,
+        payload: { campaignId: campaign.id, type: 'marketing_campaign' },
+      });
+      return { sent: true };
+    } catch (err: any) {
+      if (err?.message === 'WhatsApp is not enabled') {
+        return { sent: false, skippedReason: 'SKIPPED_NOT_IMPLEMENTED' };
+      }
+      throw err;
+    }
   },
 
   /**
@@ -891,6 +946,17 @@ export const marketingService = {
     } else if (channel === 'IN_APP') {
       if (!data.title || !data.inAppBody) {
         throw new BadRequestError('Title and inAppBody are required for IN_APP campaigns');
+      }
+    } else if (channel === 'WHATSAPP') {
+      if (!data.whatsappTemplateKey || !data.whatsappTemplateKey.trim()) {
+        throw new BadRequestError(
+          'whatsappTemplateKey is required for WHATSAPP campaigns (use an approved Meta template name)'
+        );
+      }
+      if (!data.contentText || !data.contentText.trim()) {
+        throw new BadRequestError(
+          'contentText is required for WHATSAPP campaigns (used as the template body message)'
+        );
       }
     }
   },

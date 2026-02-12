@@ -246,6 +246,7 @@ export const marketingRepository = {
         email: true,
         fullName: true,
         role: true,
+        phoneNumber: true,
       },
     });
   },
@@ -260,6 +261,7 @@ export const marketingRepository = {
         email: true,
         fullName: true,
         role: true,
+        phoneNumber: true,
       },
     });
   },
@@ -276,6 +278,7 @@ export const marketingRepository = {
         email: true,
         fullName: true,
         role: true,
+        phoneNumber: true,
       },
     });
   },
@@ -292,6 +295,7 @@ export const marketingRepository = {
         email: true,
         fullName: true,
         role: true,
+        phoneNumber: true,
       },
     });
   },
@@ -326,6 +330,7 @@ export const marketingRepository = {
         email: true,
         fullName: true,
         role: true,
+        phoneNumber: true,
       },
     });
   },

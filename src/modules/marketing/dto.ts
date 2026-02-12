@@ -43,10 +43,19 @@ export const createCampaignSchema = z.object({
         if (data.channel === 'IN_APP') {
           return data.title && data.inAppBody;
         }
+        if (data.channel === 'WHATSAPP') {
+          return (
+            data.whatsappTemplateKey &&
+            data.whatsappTemplateKey.trim().length > 0 &&
+            data.contentText &&
+            data.contentText.trim().length > 0
+          );
+        }
         return true;
       },
       {
-        message: 'Required fields missing for selected channel',
+        message:
+          'Required fields missing for selected channel. WHATSAPP requires whatsappTemplateKey and contentText.',
       }
     ),
 });
@@ -80,9 +89,9 @@ export const updateCampaignSchema = z.object({
       subject: z.string().min(1).max(500).optional().nullable(),
       title: z.string().min(1).max(200).optional().nullable(),
       contentHtml: z.string().optional().nullable(),
-      contentText: z.string().optional().nullable(),
+      contentText: z.string().min(1).optional().nullable(),
       inAppBody: z.string().max(1000).optional().nullable(),
-      whatsappTemplateKey: z.string().optional().nullable(),
+      whatsappTemplateKey: z.string().min(1).optional().nullable(),
       scheduledAt: z
         .string()
         .datetime()
