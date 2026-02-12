@@ -26,6 +26,16 @@ async function startServer() {
       console.warn('   To fix: Ensure Redis is running and REDIS_URL/REDIS_HOST is set correctly');
     }
 
+    try {
+      const { initializeRfqScheduler } = await import('./modules/rfq/scheduler');
+      await initializeRfqScheduler();
+    } catch (error: any) {
+      console.warn('⚠️  Failed to initialize RFQ expiry scheduler');
+      if (error.message) {
+        console.warn('   Error:', error.message);
+      }
+    }
+
     // Create HTTP server
     const httpServer = createServer(app);
 
@@ -107,6 +117,15 @@ async function gracefulShutdown() {
       // Suppress connection errors during shutdown (expected)
       if (!error.message?.includes('Connection is closed') && !error.message?.includes('closed')) {
         console.error('Error shutting down scheduler:', error);
+      }
+    }
+
+    try {
+      const { shutdownRfqScheduler } = await import('./modules/rfq/scheduler');
+      await shutdownRfqScheduler();
+    } catch (error: any) {
+      if (!error.message?.includes('Connection is closed') && !error.message?.includes('closed')) {
+        console.error('Error shutting down RFQ scheduler:', error);
       }
     }
 

@@ -907,6 +907,28 @@ export const paymentService = {
         }
       }
 
+      // RFQ quote checkout completion flow
+      if (paymentType === 'RFQ_QUOTE') {
+        try {
+          const { rfqService } = await import('../rfq/service');
+          const result = await rfqService.handleCheckoutSessionCompleted(session);
+          return {
+            received: true,
+            message: 'RFQ quote payment processed successfully',
+            eventType: event.type,
+            result,
+          };
+        } catch (error: any) {
+          console.error('[Payment Webhook] Error processing RFQ quote payment:', {
+            error: error.message,
+            stack: error.stack,
+            sessionId: session.id,
+            quoteId: session.metadata?.quoteId,
+          });
+          throw error;
+        }
+      }
+
       const bookingId = session.metadata?.bookingId || session.client_reference_id;
 
       if (!bookingId) {

@@ -35,6 +35,22 @@ enum ShipmentStatus {
   CLOSED
 }
 
+enum ShipmentRequestStatus {
+  OPEN
+  QUOTED
+  ACCEPTED
+  CANCELLED
+  EXPIRED
+}
+
+enum RequestQuoteStatus {
+  PENDING
+  AWAITING_PAYMENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
 enum BookingStatus {
   PENDING
   ACCEPTED
@@ -284,6 +300,7 @@ model User {
   marketingMessages   MarketingMessageLog[]
   feedbacks           Feedback[]
   whatsappMessages    WhatsAppMessage[]
+  shipmentRequests    ShipmentRequest[]
 
   @@index([email])
   @@index([companyId])
@@ -351,6 +368,7 @@ model Company {
   creditTransactions CompanyCreditTransaction[]
   feedbacks          Feedback[]
   whatsappMessages   WhatsAppMessage[]
+  requestQuotes      RequestQuote[]
 
   @@index([slug])
   @@index([isVerified])
@@ -442,6 +460,52 @@ model ShipmentSlot {
   @@index([status, updatedAt])
 }
 
+model ShipmentRequest {
+  id                 String                @id @default(cuid())
+  customerId         String
+  originCity         String
+  originCountry      String
+  destinationCity    String
+  destinationCountry String
+  weightKg           Float?
+  itemsCount         Int?
+  preferredMode      ShipmentMode?
+  description        String?
+  targetDate         DateTime?
+  status             ShipmentRequestStatus @default(OPEN)
+  expiresAt          DateTime?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  customer User           @relation(fields: [customerId], references: [id])
+  quotes   RequestQuote[]
+  bookings Booking[]
+
+  @@index([status, createdAt])
+}
+
+model RequestQuote {
+  id              String             @id @default(cuid())
+  requestId       String
+  companyId       String
+  priceMinor      Int
+  currency        String             @default("GBP")
+  estimatedDays   Int
+  note            String?
+  validUntil      DateTime
+  status          RequestQuoteStatus @default(PENDING)
+  stripeSessionId String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  request  ShipmentRequest @relation(fields: [requestId], references: [id])
+  company  Company         @relation(fields: [companyId], references: [id])
+  bookings Booking[]
+
+  @@index([requestId, companyId])
+  @@unique([requestId, companyId])
+}
+
 model Booking {
   id                   String                @id
   shipmentSlotId       String
@@ -501,22 +565,29 @@ model Booking {
   deliveryProofImages  String[]              @default([]) // Array of proof of delivery image URLs
   // Label for printing
   labelUrl             String? // URL to the printable shipping label PDF
+  shipmentRequestId    String?
+  requestQuoteId       String?
   trackingStatus       BookingTrackingStatus @default(BOOKED)
   trackingUpdatedAt    DateTime?
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
 
   // Relations
-  payment        Payment?
-  review         Review?
-  chatRoom       ChatRoom?
-  extraCharges   BookingExtraCharge[]
-  trackingEvents BookingTrackingEvent[]
+  payment         Payment?
+  review          Review?
+  chatRoom        ChatRoom?
+  extraCharges    BookingExtraCharge[]
+  trackingEvents  BookingTrackingEvent[]
+  shipmentRequest ShipmentRequest?   @relation(fields: [shipmentRequestId], references: [id], onDelete: SetNull)
+  requestQuote    RequestQuote?      @relation(fields: [requestQuoteId], references: [id], onDelete: SetNull)
 
   @@index([customerId])
   @@index([companyId])
   @@index([shipmentSlotId])
   @@index([status])
+  @@index([shipmentRequestId])
+  @@index([requestQuoteId])
+  @@unique([requestQuoteId])
 }
 
 model BookingTrackingEvent {

@@ -30,6 +30,7 @@ import { paymentController } from './modules/payments/controller';
 import { billingWebhookController } from './modules/billing/webhook-controller';
 import publicSeoRoutes from './modules/publicSeo/publicSeo.routes';
 import whatsappRoutes from './modules/whatsapp/routes';
+import rfqRoutes from './modules/rfq/routes';
 import {
   adminRouter as marketingAdminRoutes,
   companyRouter as marketingCompanyRoutes,
@@ -182,6 +183,7 @@ app.use('/public', bookingPublicRoutes);
 // Alias routes for backward compatibility / direct access
 app.use('/public', publicSeoRoutes);
 app.use('/', whatsappRoutes); // WhatsApp webhooks and admin routes
+app.use('/', rfqRoutes);
 
 // Error handling middleware (must be last)
 app.use(errorHandler);
