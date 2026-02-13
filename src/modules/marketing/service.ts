@@ -340,12 +340,38 @@ export const marketingService = {
   ) {
     const campaign = await this.getCampaign(campaignId, userId, userRole, companyId);
 
-    if (!['DRAFT', 'SCHEDULED'].includes(campaign.status)) {
+    const isRetry = campaign.status === 'FAILED';
+    if (!['DRAFT', 'SCHEDULED', 'FAILED'].includes(campaign.status)) {
       throw new BadRequestError('Campaign has already been sent or is in progress');
     }
 
-    // Resolve recipients
-    const recipients = await this.resolveRecipients(campaign);
+    // Resolve recipients (for retry: only those who didn't receive the message)
+    let recipients: ResolvedRecipient[];
+    if (isRetry) {
+      const existingLogs = await marketingRepository.getMessageLogsByCampaign(campaignId);
+      const sentRecipientIds = new Set(
+        existingLogs.filter((l) => l.status === 'SENT').map((l) => l.recipientId)
+      );
+      const allRecipients = await this.resolveRecipients(campaign);
+      recipients = allRecipients.filter((r) => !sentRecipientIds.has(r.id));
+      if (recipients.length === 0) {
+        const statusCounts = await marketingRepository.countMessageLogsByCampaignAndStatus(
+          campaignId
+        );
+        await marketingRepository.updateCampaignStatus(campaignId, 'SENT', {
+          sentAt: new Date(),
+          deliveredCount: statusCounts.SENT || 0,
+          failedCount:
+            (statusCounts.FAILED || 0) +
+            (statusCounts.SKIPPED_OPT_OUT || 0) +
+            (statusCounts.SKIPPED_NO_PHONE || 0) +
+            (statusCounts.SKIPPED_NOT_IMPLEMENTED || 0),
+        });
+        return { success: true, recipientCount: 0, retry: true };
+      }
+    } else {
+      recipients = await this.resolveRecipients(campaign);
+    }
 
     // Check recipient limits
     const maxRecipients =
@@ -477,43 +503,84 @@ export const marketingService = {
       }
     }
 
+    console.log(
+      `[Campaign] Sending campaign ${campaignId} | channel=${campaign.channel} | recipients=${recipients.length} | retry=${isRetry}`
+    );
+
     // Update campaign status to SENDING
     await marketingRepository.updateCampaignStatus(campaignId, 'SENDING', {
       startedAt: new Date(),
-      totalRecipients: recipients.length,
+      ...(isRetry ? {} : { totalRecipients: recipients.length }),
     });
+    if (isRetry) {
+      await prisma.marketingCampaign.update({
+        where: { id: campaignId },
+        data: { failureReason: null },
+      });
+    }
 
-    // Create message logs
-    await marketingRepository.bulkCreateMessageLogs(
-      recipients.map((r) => ({
-        campaignId: campaign.id,
-        recipientId: r.id,
-        channel: campaign.channel,
-        status: 'QUEUED',
-      }))
-    );
+    // Create message logs only on first send, not on retry
+    if (!isRetry) {
+      await marketingRepository.bulkCreateMessageLogs(
+        recipients.map((r) => ({
+          campaignId: campaign.id,
+          recipientId: r.id,
+          channel: campaign.channel,
+          status: 'QUEUED',
+        }))
+      );
+    }
 
     // Process in batches to avoid timeouts
     try {
       await this.processCampaignBatch(campaign, recipients.slice(0, BATCH_SIZE));
 
-      // Mark as SENT
       const statusCounts = await marketingRepository.countMessageLogsByCampaignAndStatus(
         campaignId
       );
+      const deliveredCount = statusCounts.SENT || 0;
+      const failedCount =
+        (statusCounts.FAILED || 0) +
+        (statusCounts.SKIPPED_OPT_OUT || 0) +
+        (statusCounts.SKIPPED_NO_PHONE || 0) +
+        (statusCounts.SKIPPED_NOT_IMPLEMENTED || 0);
+      const totalRecipientsForCampaign = campaign.totalRecipients || recipients.length;
+
+      // If no messages were delivered and we had recipients, mark as FAILED so user can retry
+      if (deliveredCount === 0 && totalRecipientsForCampaign > 0) {
+        const failureReason = 'No messages were delivered. You can retry sending.';
+        console.error(
+          `[Campaign] Marking campaign ${campaignId} as FAILED: ${failureReason} | ` +
+            `statusCounts=${JSON.stringify(statusCounts)} | channel=${campaign.channel}`
+        );
+        await marketingRepository.updateCampaignStatus(campaignId, 'FAILED', {
+          failureReason,
+          deliveredCount: 0,
+          failedCount,
+        });
+        return {
+          success: false,
+          recipientCount: recipients.length,
+          retry: isRetry,
+          message: failureReason,
+        };
+      }
+
       await marketingRepository.updateCampaignStatus(campaignId, 'SENT', {
         sentAt: new Date(),
-        deliveredCount: statusCounts.SENT || 0,
-        failedCount:
-          (statusCounts.FAILED || 0) +
-          (statusCounts.SKIPPED_OPT_OUT || 0) +
-          (statusCounts.SKIPPED_NOT_IMPLEMENTED || 0),
+        deliveredCount,
+        failedCount,
       });
 
-      return { success: true, recipientCount: recipients.length };
+      return { success: true, recipientCount: recipients.length, retry: isRetry };
     } catch (error) {
+      const failureReason = error instanceof Error ? error.message : 'Unknown error';
+      console.error(
+        `[Campaign] Campaign ${campaignId} failed with exception:`,
+        error instanceof Error ? error.stack : failureReason
+      );
       await marketingRepository.updateCampaignStatus(campaignId, 'FAILED', {
-        failureReason: error instanceof Error ? error.message : 'Unknown error',
+        failureReason,
       });
       throw error;
     }
@@ -848,15 +915,18 @@ export const marketingService = {
       return { sent: false, skippedReason: 'SKIPPED_NOT_IMPLEMENTED' };
     }
 
-    // Meta template body parameter max length (single segment)
+    // Meta template body parameter: no newlines/tabs, max 4 consecutive spaces (API 132018)
     const BODY_PARAM_MAX_LENGTH = 1024;
-    const bodyText = (campaign.contentText || '').trim().slice(0, BODY_PARAM_MAX_LENGTH);
+    let bodyText = (campaign.contentText || '').trim().slice(0, BODY_PARAM_MAX_LENGTH);
+    bodyText = bodyText
+      .replace(/[\r\n\t]+/g, ' ')
+      .replace(/\s{5,}/g, '    '); // collapse 5+ spaces to 4 (Meta limit)
 
     try {
       await sendTemplateMessage({
         toPhone: recipient.phoneNumber,
         templateName,
-        languageCode: config.whatsapp.defaultCountry === 'GB' ? 'en_GB' : 'en',
+        languageCode: 'en',
         components: [
           {
             type: 'body',
@@ -872,6 +942,10 @@ export const marketingService = {
       if (err?.message === 'WhatsApp is not enabled') {
         return { sent: false, skippedReason: 'SKIPPED_NOT_IMPLEMENTED' };
       }
+      console.error(
+        `[Campaign] WhatsApp send failed for campaign ${campaign.id} to ${recipient.phoneNumber}:`,
+        err?.message || err
+      );
       throw err;
     }
   },
