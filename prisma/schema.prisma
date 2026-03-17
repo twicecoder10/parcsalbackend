@@ -244,6 +244,55 @@ enum ContactStatus {
   RESOLVED
 }
 
+enum TravellerVerificationStatus {
+  NOT_STARTED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum TravelCourierStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+  CANCELLED
+}
+
+enum TravelBookingStatus {
+  PENDING_APPROVAL
+  APPROVED_AWAITING_PAYMENT
+  CONFIRMED
+  IN_TRANSIT
+  DELIVERED_PENDING_CUSTOMER_CONFIRMATION
+  COMPLETED
+  REJECTED
+  CANCELLED
+  DISPUTED
+}
+
+enum TravelItemRiskLevel {
+  LOW
+  REVIEW
+  BLOCKED
+}
+
+enum TravelCourierDisputeStatus {
+  OPEN
+  IN_REVIEW
+  RESOLVED_FOR_CUSTOMER
+  RESOLVED_FOR_TRAVELLER
+  CLOSED
+}
+
+enum TravelCourierDisputeReason {
+  ITEM_NOT_RECEIVED
+  ITEM_DAMAGED
+  ITEM_MISSING
+  WRONG_ITEM
+  DELIVERY_DELAY
+  OTHER
+}
+
 enum WhatsAppMessageDirection {
   OUTBOUND
   INBOUND
@@ -300,7 +349,10 @@ model User {
   marketingMessages   MarketingMessageLog[]
   feedbacks           Feedback[]
   whatsappMessages    WhatsAppMessage[]
-  shipmentRequests    ShipmentRequest[]
+  shipmentRequests          ShipmentRequest[]
+  travellerProfile          TravellerProfile?
+  travelCourierListings     TravelCourierListing[]
+  travelCourierBookings     TravelCourierBooking[]   @relation("TravelCourierCustomer")
 
   @@index([email])
   @@index([companyId])
@@ -991,4 +1043,133 @@ model WhatsAppMessage {
   @@index([providerMsgId])
   @@index([companyId, createdAt])
   @@index([userId, createdAt])
+}
+
+model TravellerProfile {
+  id                    String                      @id @default(cuid())
+  userId                String                      @unique
+  verificationStatus    TravellerVerificationStatus @default(NOT_STARTED)
+  idDocumentUrl         String?
+  selfieUrl             String?
+  flightTicketUrl       String?
+  idVerified            Boolean                     @default(false)
+  flightVerified        Boolean                     @default(false)
+  reviewedByAdminId     String?
+  reviewedAt            DateTime?
+  rejectionReason       String?
+  travellerRatingAvg    Float?
+  travellerRatingCount  Int                         @default(0)
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model TravelCourierListing {
+  id                           String              @id @default(cuid())
+  userId                       String
+  status                       TravelCourierStatus @default(DRAFT)
+  originCity                   String
+  originCountry                String
+  destinationCity              String
+  destinationCountry           String
+  departureDate                DateTime
+  arrivalDate                  DateTime?
+  airlineName                  String?
+  flightReference              String?
+  availableWeightKg            Float
+  remainingWeightKg            Float
+  pricePerKgMinor              Int
+  currency                     String              @default("GBP")
+  notes                        String?
+  baggagePolicyNotes           String?
+  cutoffDate                   DateTime?
+  flightProofUrl               String?
+  flightProofVerified          Boolean             @default(false)
+  flightProofVerifiedAt        DateTime?
+  flightProofReviewedByAdminId String?
+  flightProofRejectionReason   String?
+  createdAt                    DateTime            @default(now())
+  updatedAt                    DateTime            @updatedAt
+
+  user     User                   @relation(fields: [userId], references: [id])
+  bookings TravelCourierBooking[]
+
+  @@index([originCountry, destinationCountry])
+  @@index([status, departureDate])
+}
+
+model TravelCourierBooking {
+  id                              String              @id
+  listingId                       String
+  customerId                      String
+  requestedWeightKg               Float
+  itemDescription                 String?
+  declaredContents                String?
+  restrictedItemsAccepted         Boolean             @default(false)
+  itemRiskLevel                   TravelItemRiskLevel @default(LOW)
+  riskFlags                       Json?
+  pickupNotes                     String?
+  deliveryNotes                   String?
+  baseAmountMinor                 Int
+  adminFeeAmountMinor             Int
+  processingFeeMinor              Int
+  totalAmountMinor                Int
+  status                          TravelBookingStatus @default(PENDING_APPROVAL)
+  stripeCheckoutSessionId         String?
+  stripePaymentIntentId           String?
+  travellerConfirmedDelivered     Boolean             @default(false)
+  customerConfirmedDelivered      Boolean             @default(false)
+  deliveredAt                     DateTime?
+  autoReleaseAt                   DateTime?
+  disputeOpened                   Boolean             @default(false)
+  payoutReleased                  Boolean             @default(false)
+  payoutReleasedAt                DateTime?
+  createdAt                       DateTime            @default(now())
+  updatedAt                       DateTime            @updatedAt
+
+  listing  TravelCourierListing  @relation(fields: [listingId], references: [id])
+  customer User                  @relation("TravelCourierCustomer", fields: [customerId], references: [id])
+  review   TravelCourierReview?
+  dispute  TravelCourierDispute?
+
+  @@index([listingId])
+  @@index([customerId])
+}
+
+model TravelCourierReview {
+  id              String   @id @default(cuid())
+  bookingId       String   @unique
+  reviewerId      String
+  travellerUserId String
+  rating          Int
+  comment         String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  booking TravelCourierBooking @relation(fields: [bookingId], references: [id])
+
+  @@index([travellerUserId])
+  @@index([reviewerId])
+}
+
+model TravelCourierDispute {
+  id              String                       @id @default(cuid())
+  bookingId       String                       @unique
+  openedByUserId  String
+  reason          TravelCourierDisputeReason
+  description     String
+  evidence        Json?
+  status          TravelCourierDisputeStatus   @default(OPEN)
+  adminNotes      String?
+  resolutionNotes String?
+  travellerResponse     String?
+  travellerEvidence     Json?
+  createdAt       DateTime                     @default(now())
+  updatedAt       DateTime                     @updatedAt
+
+  booking TravelCourierBooking @relation(fields: [bookingId], references: [id])
+
+  @@index([status])
+  @@index([openedByUserId])
 }

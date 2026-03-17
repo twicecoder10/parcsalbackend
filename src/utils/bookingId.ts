@@ -143,3 +143,73 @@ export async function generateBookingId(
   const timestamp = Date.now().toString(36).toUpperCase().slice(-7).padStart(7, '0');
   return `${prefix}-${year}-${timestamp}`;
 }
+
+/**
+ * Generates a custom travel courier booking ID in the format: TCB-YYYY-XXXXXXX
+ * Same advisory-lock approach as generateBookingId but scoped to travelCourierBooking.
+ */
+export async function generateTravelCourierBookingId(
+  tx?: Prisma.TransactionClient | PrismaClient
+): Promise<string> {
+  const year = new Date().getFullYear();
+  const prefix = 'TCB';
+  const db = tx || prisma;
+
+  const lockKey = `tcb_id_${year}`;
+  const lockHash = hashString(lockKey);
+
+  try {
+    if (tx) {
+      await db.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${lockHash})`);
+    } else {
+      const lockResult = await db.$queryRawUnsafe<Array<{ pg_try_advisory_lock: boolean }>>(
+        `SELECT pg_try_advisory_lock(${lockHash}) as pg_try_advisory_lock`
+      );
+      if (!lockResult[0]?.pg_try_advisory_lock) {
+        await new Promise(resolve => setTimeout(resolve, Math.random() * 50 + 10));
+        await db.$queryRawUnsafe<Array<{ pg_try_advisory_lock: boolean }>>(
+          `SELECT pg_try_advisory_lock(${lockHash}) as pg_try_advisory_lock`
+        );
+      }
+    }
+  } catch (error) {
+    console.warn('[generateTravelCourierBookingId] Advisory lock failed, falling back to collision detection:', error);
+  }
+
+  const startOfYear = new Date(year, 0, 1);
+  const countThisYear = await db.travelCourierBooking.count({
+    where: { createdAt: { gte: startOfYear } },
+  });
+
+  const sequentialNumber = countThisYear + 1;
+  let base36Id = toBase36(sequentialNumber).padStart(7, '0');
+  let bookingId = `${prefix}-${year}-${base36Id}`;
+
+  let attempts = 0;
+  const maxAttempts = 10;
+
+  while (attempts < maxAttempts) {
+    const existing = await db.travelCourierBooking.findUnique({
+      where: { id: bookingId },
+    });
+
+    if (!existing) {
+      if (!tx) {
+        try { await db.$executeRawUnsafe(`SELECT pg_advisory_unlock(${lockHash})`); } catch (_) {}
+      }
+      return bookingId;
+    }
+
+    attempts++;
+    const nextNumber = countThisYear + 1 + attempts;
+    base36Id = toBase36(nextNumber).padStart(7, '0');
+    bookingId = `${prefix}-${year}-${base36Id}`;
+  }
+
+  if (!tx) {
+    try { await db.$executeRawUnsafe(`SELECT pg_advisory_unlock(${lockHash})`); } catch (_) {}
+  }
+
+  const timestamp = Date.now().toString(36).toUpperCase().slice(-7).padStart(7, '0');
+  return `${prefix}-${year}-${timestamp}`;
+}

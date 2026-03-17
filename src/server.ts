@@ -36,6 +36,16 @@ async function startServer() {
       }
     }
 
+    try {
+      const { initializeTravelCourierScheduler } = await import('./modules/travelCourier/scheduler');
+      await initializeTravelCourierScheduler();
+    } catch (error: any) {
+      console.warn('⚠️  Failed to initialize Travel Courier auto-release scheduler');
+      if (error.message) {
+        console.warn('   Error:', error.message);
+      }
+    }
+
     // Create HTTP server
     const httpServer = createServer(app);
 
@@ -126,6 +136,15 @@ async function gracefulShutdown() {
     } catch (error: any) {
       if (!error.message?.includes('Connection is closed') && !error.message?.includes('closed')) {
         console.error('Error shutting down RFQ scheduler:', error);
+      }
+    }
+
+    try {
+      const { shutdownTravelCourierScheduler } = await import('./modules/travelCourier/scheduler');
+      await shutdownTravelCourierScheduler();
+    } catch (error: any) {
+      if (!error.message?.includes('Connection is closed') && !error.message?.includes('closed')) {
+        console.error('Error shutting down Travel Courier scheduler:', error);
       }
     }
 

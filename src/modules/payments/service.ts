@@ -929,6 +929,29 @@ export const paymentService = {
         }
       }
 
+      // Travel Courier booking checkout completion flow
+      if (session.metadata?.travelCourierBookingId) {
+        try {
+          const { travelCourierService } = await import('../travelCourier/service');
+          const result = await travelCourierService.handleCheckoutCompleted(session);
+          return {
+            received: true,
+            message: 'Travel courier booking payment processed successfully',
+            eventType: event.type,
+            bookingId: session.metadata.travelCourierBookingId,
+            result,
+          };
+        } catch (error: any) {
+          console.error('[Payment Webhook] Error processing travel courier payment:', {
+            error: error.message,
+            stack: error.stack,
+            sessionId: session.id,
+            travelCourierBookingId: session.metadata?.travelCourierBookingId,
+          });
+          throw error;
+        }
+      }
+
       const bookingId = session.metadata?.bookingId || session.client_reference_id;
 
       if (!bookingId) {

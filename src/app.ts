@@ -37,6 +37,8 @@ import {
   consentRouter as marketingConsentRoutes,
   publicRouter as marketingPublicRoutes,
 } from './modules/marketing/routes';
+import travellerRoutes from './modules/traveller/routes';
+import travelCourierRoutes from './modules/travelCourier/routes';
 
 const app: Express = express();
 
@@ -184,6 +186,8 @@ app.use('/public', bookingPublicRoutes);
 app.use('/public', publicSeoRoutes);
 app.use('/', whatsappRoutes); // WhatsApp webhooks and admin routes
 app.use('/', rfqRoutes);
+app.use('/', travellerRoutes);
+app.use('/travel-courier', travelCourierRoutes);
 
 // Error handling middleware (must be last)
 app.use(errorHandler);
