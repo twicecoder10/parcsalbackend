@@ -1,6 +1,8 @@
 import prisma from '../config/database';
 import { Server as SocketIOServer } from 'socket.io';
 import { sendPushNotificationToUser } from './push-notifications';
+import { queueEmail } from '../modules/email/queue';
+import { emailService } from '../config/email';
 
 export type NotificationType =
   | 'BOOKING_CREATED'
@@ -28,6 +30,10 @@ export type NotificationType =
   | 'EXTRA_CHARGE_CANCELLED'
   | 'MARKETING_MESSAGE'
   | 'TRAVELLER_VERIFIED'
+  | 'TRAVEL_LISTING_CREATED'
+  | 'TRAVEL_LISTING_PUBLISHED'
+  | 'TRAVEL_LISTING_CLOSED'
+  | 'TRAVEL_FLIGHT_PROOF_SUBMITTED'
   | 'TRAVEL_BOOKING_REQUESTED'
   | 'TRAVEL_BOOKING_APPROVED'
   | 'TRAVEL_BOOKING_REJECTED'
@@ -47,6 +53,17 @@ export interface CreateNotificationData {
   title: string;
   body: string;
   metadata?: Record<string, any>;
+  /** Send email whenever the user has an address, even if notificationEmail is off (e.g. verification outcomes). */
+  alwaysSendEmail?: boolean;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // Socket.IO instance (initialized from server.ts)
@@ -213,9 +230,63 @@ export async function createNotification(data: CreateNotificationData) {
       });
     }
 
-    // TODO: Send email/SMS based on user preferences
-    // For now, we just create the notification in the database
-    // Email/SMS sending can be implemented later with a queue system
+    // Email: normal flow respects notificationEmail; alwaysSendEmail overrides for critical account messages.
+    if (user.email && (user.notificationEmail || data.alwaysSendEmail)) {
+      const safeName = escapeHtml(user.fullName || 'there');
+      const safeTitle = escapeHtml(data.title);
+      const safeBody = escapeHtml(data.body);
+
+      const html = `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>${safeTitle} - Parcsal</title>
+        </head>
+        <body style="margin:0;padding:0;font-family:Arial,sans-serif;background:#f5f5f5;">
+          <table role="presentation" style="width:100%;border-collapse:collapse;background:#f5f5f5;padding:24px 0;">
+            <tr>
+              <td align="center">
+                <table role="presentation" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;">
+                  <tr>
+                    <td style="background:#FF6B35;padding:24px;color:#ffffff;font-size:22px;font-weight:700;">
+                      Parcsal Notification
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding:24px;">
+                      <p style="margin:0 0 12px 0;color:#1A1A1A;">Hi ${safeName},</p>
+                      <h2 style="margin:0 0 12px 0;color:#1A1A1A;font-size:20px;">${safeTitle}</h2>
+                      <p style="margin:0;color:#4A4A4A;font-size:15px;line-height:1.6;">${safeBody}</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+        </html>
+      `;
+
+      if (data.alwaysSendEmail) {
+        // Critical notification path (e.g. profile rejection): send immediately via SMTP.
+        emailService
+          .sendEmail(user.email, `[Parcsal] ${data.title}`, html, `${data.title}\n\n${data.body}`)
+          .catch((error) => {
+            console.error('[Notification] Error sending critical notification email:', error);
+          });
+      } else {
+        queueEmail({
+          to: user.email,
+          subject: `[Parcsal] ${data.title}`,
+          html,
+          text: `${data.title}\n\n${data.body}`,
+        }).catch((error) => {
+          console.error('[Notification] Error queueing notification email:', error);
+        });
+      }
+    }
 
     return notification;
   } catch (error) {
@@ -262,6 +333,34 @@ export async function createCompanyNotification(
     return notifications.filter((n) => n !== null);
   } catch (error) {
     console.error('[Notification] Error creating company notifications:', error);
+    return [];
+  }
+}
+
+/**
+ * Create notifications for all SUPER_ADMIN users
+ */
+export async function createSuperAdminNotification(
+  type: NotificationType,
+  title: string,
+  body: string,
+  metadata?: Record<string, any>
+) {
+  try {
+    const admins = await prisma.user.findMany({
+      where: { role: 'SUPER_ADMIN' },
+      select: { id: true },
+    });
+
+    const notifications = await Promise.all(
+      admins.map((admin) =>
+        createNotification({ userId: admin.id, type, title, body, metadata })
+      )
+    );
+
+    return notifications.filter((n) => n !== null);
+  } catch (error) {
+    console.error('[Notification] Error creating super admin notifications:', error);
     return [];
   }
 }

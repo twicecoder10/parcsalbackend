@@ -15,7 +15,7 @@ export const updateTravellerProfileSchema = z.object({
     flightTicketUrl: z.string().url('Invalid flight ticket URL').optional(),
   }).refine(
     (data) => data.idDocumentUrl || data.selfieUrl || data.flightTicketUrl,
-    { message: 'At least one document URL is required' }
+    { message: 'At least one field is required' }
   ),
 });
 

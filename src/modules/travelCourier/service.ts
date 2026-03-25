@@ -9,7 +9,7 @@ import {
 } from '../../utils/errors';
 import { parsePagination, createPaginatedResponse } from '../../utils/pagination';
 import { calculateBookingCharges } from '../../utils/paymentCalculator';
-import { createNotification } from '../../utils/notifications';
+import { createNotification, createSuperAdminNotification } from '../../utils/notifications';
 import { scanTravelCourierItemRisk } from '../../utils/travelItemRiskScanner';
 import { generateTravelCourierBookingId } from '../../utils/bookingId';
 import {
@@ -68,6 +68,23 @@ export const travelCourierService = {
         status: 'DRAFT',
       },
     });
+
+    await createNotification({
+      userId: req.user.id,
+      type: 'TRAVEL_LISTING_CREATED' as any,
+      title: 'Listing Created',
+      body: `Your listing for ${dto.originCity} → ${dto.destinationCity} has been created as a draft.${dto.flightProofUrl ? ' Flight proof is pending admin review.' : ' Please upload your flight proof to proceed.'}`,
+      metadata: { listingId: listing.id },
+    });
+
+    if (dto.flightProofUrl) {
+      await createSuperAdminNotification(
+        'TRAVEL_FLIGHT_PROOF_SUBMITTED' as any,
+        'New Flight Proof Submitted',
+        `A traveller has submitted a new listing (${dto.originCity} → ${dto.destinationCity}) with flight proof awaiting review.`,
+        { listingId: listing.id, userId: req.user.id },
+      );
+    }
 
     return listing;
   },
@@ -136,7 +153,9 @@ export const travelCourierService = {
       updateData.remainingWeightKg = dto.availableWeightKg;
     }
 
-    if (dto.flightProofUrl && dto.flightProofUrl !== listing.flightProofUrl) {
+    const isNewFlightProof = dto.flightProofUrl && dto.flightProofUrl !== listing.flightProofUrl;
+
+    if (isNewFlightProof) {
       updateData.flightProofVerified = false;
       updateData.flightProofVerifiedAt = null;
       updateData.flightProofReviewedByAdminId = null;
@@ -146,6 +165,48 @@ export const travelCourierService = {
     const updated = await prisma.travelCourierListing.update({
       where: { id: listingId },
       data: updateData,
+    });
+
+    if (isNewFlightProof) {
+      await createNotification({
+        userId: req.user.id,
+        type: 'TRAVEL_FLIGHT_PROOF_SUBMITTED' as any,
+        title: 'Flight Proof Submitted',
+        body: `Your updated flight proof for ${listing.originCity} → ${listing.destinationCity} is pending admin review.`,
+        metadata: { listingId },
+      });
+
+      await createSuperAdminNotification(
+        'TRAVEL_FLIGHT_PROOF_SUBMITTED' as any,
+        'Flight Proof Re-submitted',
+        `A traveller has re-submitted flight proof for listing ${listing.originCity} → ${listing.destinationCity}. Please review.`,
+        { listingId, userId: req.user.id },
+      );
+    }
+
+    return updated;
+  },
+
+  async _publishListingInternal(listingId: string) {
+    const listing = await prisma.travelCourierListing.findUnique({
+      where: { id: listingId },
+    });
+    if (!listing) throw new NotFoundError('Listing not found');
+    if (listing.status !== 'DRAFT') {
+      throw new BadRequestError('Only DRAFT listings can be published');
+    }
+
+    const updated = await prisma.travelCourierListing.update({
+      where: { id: listingId },
+      data: { status: 'PUBLISHED' },
+    });
+
+    await createNotification({
+      userId: listing.userId,
+      type: 'TRAVEL_LISTING_PUBLISHED' as any,
+      title: 'Listing Published',
+      body: `Your listing for ${listing.originCity} → ${listing.destinationCity} is now live and visible to customers.`,
+      metadata: { listingId },
     });
 
     return updated;
@@ -160,9 +221,6 @@ export const travelCourierService = {
     });
     if (!listing) throw new NotFoundError('Listing not found');
     if (listing.userId !== req.user.id) throw new ForbiddenError();
-    if (listing.status !== 'DRAFT') {
-      throw new BadRequestError('Only DRAFT listings can be published');
-    }
     if (!listing.flightProofUrl) {
       throw new BadRequestError('Flight proof document is required before publishing');
     }
@@ -170,12 +228,7 @@ export const travelCourierService = {
       throw new BadRequestError('Flight proof must be verified by admin before publishing');
     }
 
-    const updated = await prisma.travelCourierListing.update({
-      where: { id: listingId },
-      data: { status: 'PUBLISHED' },
-    });
-
-    return updated;
+    return this._publishListingInternal(listingId);
   },
 
   async closeListing(req: AuthRequest, listingId: string) {
@@ -193,6 +246,14 @@ export const travelCourierService = {
     const updated = await prisma.travelCourierListing.update({
       where: { id: listingId },
       data: { status: 'CLOSED' },
+    });
+
+    await createNotification({
+      userId: req.user.id,
+      type: 'TRAVEL_LISTING_CLOSED' as any,
+      title: 'Listing Closed',
+      body: `Your listing for ${listing.originCity} → ${listing.destinationCity} has been closed and is no longer visible to customers.`,
+      metadata: { listingId },
     });
 
     return updated;
@@ -506,8 +567,8 @@ export const travelCourierService = {
         },
       ],
       mode: 'payment',
-      success_url: `${config.frontendUrl}/travel-courier/bookings/${booking.id}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${config.frontendUrl}/travel-courier/bookings/${booking.id}?payment=cancelled`,
+      success_url: `${config.frontendUrl}/parcsal-traveller/bookings/${booking.id}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${config.frontendUrl}/parcsal-traveller/bookings/${booking.id}?payment=cancelled`,
       metadata: {
         travelCourierBookingId: booking.id,
         listingId: booking.listingId,
@@ -794,21 +855,42 @@ export const travelCourierService = {
       throw new BadRequestError('No flight proof uploaded on this listing');
     }
 
+    const shouldAutoPublish = dto.flightProofVerified;
+
+    console.log('[reviewFlightProof] listingId=%s, currentStatus=%s, flightProofVerified=%s, shouldAutoPublish=%s',
+      listingId, listing.status, dto.flightProofVerified, shouldAutoPublish);
+
+    const updateData: Record<string, any> = {
+      flightProofVerified: dto.flightProofVerified,
+      flightProofVerifiedAt: dto.flightProofVerified ? new Date() : null,
+      flightProofReviewedByAdminId: adminId,
+      flightProofRejectionReason: dto.flightProofVerified ? null : dto.rejectionReason,
+    };
+
+    if (shouldAutoPublish) {
+      this._publishListingInternal(listingId);
+    }
+    // if (shouldAutoPublish) {
+    //   updateData.status = 'PUBLISHED';
+    // }
+
+    console.log('[reviewFlightProof] updateData=%j', updateData);
+
     const updated = await prisma.travelCourierListing.update({
       where: { id: listingId },
-      data: {
-        flightProofVerified: dto.flightProofVerified,
-        flightProofVerifiedAt: dto.flightProofVerified ? new Date() : null,
-        flightProofReviewedByAdminId: adminId,
-        flightProofRejectionReason: dto.flightProofVerified ? null : dto.rejectionReason,
-      },
+      data: updateData,
+      include: { bookings: true },
     });
+
+    console.log('[reviewFlightProof] updated.status=%s', updated.status);
 
     const title = dto.flightProofVerified
       ? 'Flight Proof Approved'
       : 'Flight Proof Rejected';
     const body = dto.flightProofVerified
-      ? 'Your flight proof has been verified. You can now publish the listing.'
+      ? shouldAutoPublish
+        ? 'Your flight proof has been verified and your listing is now live.'
+        : 'Your flight proof has been verified. You can now publish the listing.'
       : `Your flight proof was rejected: ${dto.rejectionReason}`;
 
     await createNotification({
@@ -816,8 +898,18 @@ export const travelCourierService = {
       type: 'TRAVEL_FLIGHT_PROOF_REVIEWED' as any,
       title,
       body,
-      metadata: { listingId: listing.id },
+      metadata: { listingId: listing.id, autoPublished: shouldAutoPublish },
     });
+
+    if (shouldAutoPublish) {
+      await createNotification({
+        userId: listing.userId,
+        type: 'TRAVEL_LISTING_PUBLISHED' as any,
+        title: 'Listing Published',
+        body: `Your listing for ${listing.originCity} → ${listing.destinationCity} is now live and visible to customers.`,
+        metadata: { listingId: listing.id },
+      });
+    }
 
     return updated;
   },

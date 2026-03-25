@@ -187,7 +187,7 @@ app.use('/public', publicSeoRoutes);
 app.use('/', whatsappRoutes); // WhatsApp webhooks and admin routes
 app.use('/', rfqRoutes);
 app.use('/', travellerRoutes);
-app.use('/travel-courier', travelCourierRoutes);
+app.use('/parcsal-traveller', travelCourierRoutes);
 
 // Error handling middleware (must be last)
 app.use(errorHandler);

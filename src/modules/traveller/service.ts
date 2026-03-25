@@ -2,7 +2,7 @@ import prisma from '../../config/database';
 import { AuthRequest } from '../../middleware/auth';
 import { NotFoundError, ForbiddenError } from '../../utils/errors';
 import { parsePagination, createPaginatedResponse } from '../../utils/pagination';
-import { createNotification } from '../../utils/notifications';
+import { createNotification, createSuperAdminNotification } from '../../utils/notifications';
 import {
   UpsertTravellerProfileDto,
   UpdateTravellerProfileDto,
@@ -13,12 +13,11 @@ import { TravellerVerificationStatus } from '@prisma/client';
 function deriveStatus(
   idDocumentUrl: string | null | undefined,
   selfieUrl: string | null | undefined,
-  flightTicketUrl: string | null | undefined,
   currentStatus: TravellerVerificationStatus
 ): TravellerVerificationStatus {
   if (currentStatus === 'VERIFIED') return 'VERIFIED';
 
-  if (idDocumentUrl && selfieUrl && flightTicketUrl) {
+  if (idDocumentUrl && selfieUrl) {
     return 'PENDING';
   }
   return 'NOT_STARTED';
@@ -49,7 +48,6 @@ export const travellerService = {
     const status = deriveStatus(
       dto.idDocumentUrl,
       dto.selfieUrl,
-      dto.flightTicketUrl,
       'NOT_STARTED'
     );
 
@@ -62,6 +60,24 @@ export const travellerService = {
         verificationStatus: status,
       },
     });
+
+    await createNotification({
+      userId: req.user.id,
+      type: 'TRAVELLER_VERIFIED' as any,
+      title: 'Traveller Profile Created',
+      body:
+        status === 'PENDING'
+          ? 'Your traveller profile was created and submitted for verification. We will notify you once it is reviewed.'
+          : 'Your traveller profile was created. Upload your identity documents to start verification.',
+      metadata: { travellerProfileId: profile.id, verificationStatus: status },
+    });
+
+    await createSuperAdminNotification(
+      'TRAVELLER_VERIFIED' as any,
+      'New Traveller Profile Created',
+      `${req.user.email || 'A traveller'} created a traveller profile and is awaiting review.`,
+      { travellerProfileId: profile.id, userId: req.user.id, verificationStatus: status }
+    );
 
     return profile;
   },
@@ -80,13 +96,11 @@ export const travellerService = {
     const merged = {
       idDocumentUrl: dto.idDocumentUrl ?? existing.idDocumentUrl,
       selfieUrl: dto.selfieUrl ?? existing.selfieUrl,
-      flightTicketUrl: dto.flightTicketUrl ?? existing.flightTicketUrl,
     };
 
     const newStatus = deriveStatus(
       merged.idDocumentUrl,
       merged.selfieUrl,
-      merged.flightTicketUrl,
       existing.verificationStatus
     );
 
@@ -181,6 +195,7 @@ export const travellerService = {
       title: notifTitle,
       body: notifBody,
       metadata: { travellerProfileId: profile.id },
+      alwaysSendEmail: dto.verificationStatus === 'REJECTED',
     });
 
     return updated;
