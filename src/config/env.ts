@@ -68,6 +68,9 @@ export const config = {
       | 'EVIDENCE_OR_NOTE'
       | 'NONE',
   },
+  travelCourier: {
+    commissionBps: parseInt(process.env.TRAVELLER_COMMISSION_BPS || '1500', 10), // default 15%
+  },
   whatsapp: {
     enabled: process.env.WHATSAPP_ENABLED === 'true',
     token: process.env.WHATSAPP_TOKEN || '',

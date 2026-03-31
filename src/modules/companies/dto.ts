@@ -1,10 +1,11 @@
 import { z } from 'zod';
+import { flexibleCountryCodeValidator } from '../../utils/validators';
 
 export const updateCompanySchema = z.object({
   body: z.object({
     name: z.string().min(1).optional(),
     description: z.string().optional(),
-    country: z.string().min(1).optional(),
+    country: flexibleCountryCodeValidator.optional(),
     city: z.string().min(1).optional(),
     website: z.string().url().optional().or(z.literal('')),
     logoUrl: z.string().url().optional().or(z.literal('')),
@@ -53,9 +54,12 @@ export const createWarehouseAddressSchema = z.object({
     address: z.string().min(1, 'Address is required'),
     city: z.string().min(1, 'City is required'),
     state: z.string().optional(),
-    country: z.string().min(1, 'Country is required'),
+    country: flexibleCountryCodeValidator,
     postalCode: z.string().optional(),
     isDefault: z.boolean().optional().default(false),
+    addressLine2: z.string().optional().nullable(),
+    latitude: z.number().min(-90).max(90).optional().nullable(),
+    longitude: z.number().min(-180).max(180).optional().nullable(),
   }),
 });
 
@@ -68,9 +72,12 @@ export const updateWarehouseAddressSchema = z.object({
     address: z.string().min(1).optional(),
     city: z.string().min(1).optional(),
     state: z.string().optional(),
-    country: z.string().min(1).optional(),
+    country: flexibleCountryCodeValidator.optional(),
     postalCode: z.string().optional(),
     isDefault: z.boolean().optional(),
+    addressLine2: z.string().optional().nullable(),
+    latitude: z.number().min(-90).max(90).optional().nullable(),
+    longitude: z.number().min(-180).max(180).optional().nullable(),
   }),
 });
 

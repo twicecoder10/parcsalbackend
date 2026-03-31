@@ -4,6 +4,7 @@ import { NotFoundError, ForbiddenError, BadRequestError } from '../../utils/erro
 import { AuthRequest } from '../../middleware/auth';
 import prisma from '../../config/database';
 import { calculateBookingCharges } from '../../utils/paymentCalculator';
+import { formatMoney, type SupportedCurrency } from '../../utils/money';
 import Stripe from 'stripe';
 import { config } from '../../config/env';
 import { createNotification, createCompanyNotification } from '../../utils/notifications';
@@ -67,10 +68,13 @@ export const extraChargeService = {
       select: { plan: true, commissionRateBps: true },
     });
 
+    // Derive currency from the booking's slot (or fall back to GBP)
+    const bookingCurrency = ((booking.shipmentSlot as any).currency || 'GBP').toUpperCase();
+
     // Calculate charges - adminFeeAmount is ALWAYS 15% (charged to customer)
     // This is separate from commission (which is only deducted from FREE plan companies)
     const ADMIN_FEE_BPS = 1500; // Always 15% admin fee charged to customer
-    const charges = calculateBookingCharges(dto.baseAmountMinor, ADMIN_FEE_BPS);
+    const charges = calculateBookingCharges(dto.baseAmountMinor, ADMIN_FEE_BPS, bookingCurrency as any);
 
     // Calculate commission amount deducted from company payout
     // For FREE plan: commissionAmount = adminFeeAmount (15% deducted from company)
@@ -94,6 +98,7 @@ export const extraChargeService = {
       reason: dto.reason,
       description: dto.description || null,
       evidenceUrls: dto.evidenceUrls || [],
+      currency: bookingCurrency,
       baseAmount: charges.baseAmount,
       adminFeeAmount: charges.adminFeeAmount,
       processingFeeAmount: charges.processingFeeAmount,
@@ -110,7 +115,7 @@ export const extraChargeService = {
       userId: booking.customerId,
       type: 'EXTRA_CHARGE_REQUESTED',
       title: 'Additional Charge Requested',
-      body: `A new additional charge of £${(charges.totalAmount / 100).toFixed(2)} has been requested for your booking ${bookingId}`,
+      body: `A new additional charge of ${formatMoney({ amountMinor: charges.totalAmount, currency: bookingCurrency as SupportedCurrency })} has been requested for your booking ${bookingId}`,
       metadata: {
         bookingId,
         extraChargeId: extraCharge.id,
@@ -129,7 +134,7 @@ export const extraChargeService = {
         bookingId,
         extraCharge.id,
         charges.totalAmount,
-        'gbp',
+        bookingCurrency.toLowerCase(),
         dto.reason,
         dto.description || null,
         expiresAt,
@@ -239,7 +244,7 @@ export const extraChargeService = {
       line_items: [
         {
           price_data: {
-            currency: 'gbp',
+            currency: ((extraCharge as any).currency || 'GBP').toLowerCase(),
             product_data: {
               name: `Additional Charge - ${extraCharge.reason}`,
               description: extraCharge.description || `Additional charge for booking ${bookingId}`,
@@ -335,7 +340,7 @@ export const extraChargeService = {
         extraCharge.companyId,
         'EXTRA_CHARGE_DECLINED' as any,
         'Extra Charge Declined',
-        `Customer declined an extra charge of £${(extraCharge.totalAmount / 100).toFixed(2)} for booking ${bookingId}`,
+        `Customer declined an extra charge of ${formatMoney({ amountMinor: extraCharge.totalAmount, currency: ((extraCharge as any).currency || 'GBP') as SupportedCurrency })} for booking ${bookingId}`,
         {
           bookingId,
           extraChargeId: extraCharge.id,
@@ -397,7 +402,7 @@ export const extraChargeService = {
       userId: extraCharge.booking.customerId,
       type: 'EXTRA_CHARGE_CANCELLED' as any,
       title: 'Extra Charge Cancelled',
-      body: `An extra charge of £${(extraCharge.totalAmount / 100).toFixed(2)} has been cancelled for your booking ${bookingId}`,
+      body: `An extra charge of ${formatMoney({ amountMinor: extraCharge.totalAmount, currency: ((extraCharge as any).currency || 'GBP') as SupportedCurrency })} has been cancelled for your booking ${bookingId}`,
       metadata: {
         bookingId,
         extraChargeId: extraCharge.id,

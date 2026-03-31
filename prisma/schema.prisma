@@ -428,18 +428,25 @@ model Company {
 }
 
 model WarehouseAddress {
-  id         String   @id @default(uuid())
-  companyId  String
-  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  name       String // e.g., "Main Warehouse", "London Warehouse"
-  address    String
-  city       String
-  state      String?
-  country    String
-  postalCode String?
-  isDefault  Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id              String   @id @default(uuid())
+  companyId       String
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name            String // e.g., "Main Warehouse", "London Warehouse"
+  address         String // Legacy field — prefer addressLine1
+  city            String
+  state           String?
+  country         String // ISO 3166-1 alpha-2 code
+  postalCode      String?
+  isDefault       Boolean  @default(false)
+  // Flexible address fields
+  countryCode     String? // ISO 3166-1 alpha-2 (canonical; mirrors `country`)
+  addressLine1    String?
+  addressLine2    String?
+  stateOrProvince String?
+  latitude        Float?
+  longitude       Float?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   // Relations
   pickupBookings   Booking[] @relation("PickupWarehouse")
@@ -487,6 +494,11 @@ model ShipmentSlot {
   pricePerKg                  Decimal?           @db.Decimal(10, 2)
   pricePerItem                Decimal?           @db.Decimal(10, 2)
   flatPrice                   Decimal?           @db.Decimal(10, 2)
+  // Minor-unit pricing (preferred for new integrations)
+  pricePerKgMinor             Int?
+  pricePerItemMinor           Int?
+  flatPriceMinor              Int?
+  currency                    String             @default("GBP") // ISO 4217
   cutoffTimeForReceivingItems DateTime
   status                      ShipmentStatus     @default(DRAFT)
   trackingStatus              SlotTrackingStatus @default(PENDING)
@@ -570,12 +582,13 @@ model Booking {
   requestedWeightKg    Float?
   requestedItemsCount  Int?
   calculatedPrice      Decimal               @db.Decimal(10, 2)
-  // Payment fee breakdown (in minor units - pence)
-  baseAmount           Int? // Shipment price in pence
-  adminFeeAmount       Int? // Parcsal admin fee in pence (charged to customer)
-  processingFeeAmount  Int? // Stripe processing fee in pence
-  totalAmount          Int? // Total amount in pence
-  commissionAmount     Int? // Commission deducted from company payout (in pence) - FREE plan only
+  currency             String                @default("GBP") // ISO 4217 — listing currency at time of booking
+  // Payment fee breakdown (in minor units)
+  baseAmount           Int? // Shipment price in minor units
+  adminFeeAmount       Int? // Parcsal admin fee in minor units (charged to customer)
+  processingFeeAmount  Int? // Stripe processing fee in minor units
+  totalAmount          Int? // Total amount in minor units
+  commissionAmount     Int? // Commission deducted from company payout (in minor units) - FREE plan only
   status               BookingStatus         @default(PENDING)
   paymentStatus        PaymentStatus         @default(PENDING)
   notes                String?
@@ -871,10 +884,11 @@ model BookingExtraCharge {
   reason                ExtraChargeReason
   description           String?
   evidenceUrls          String[]          @default([])
+  currency              String            @default("GBP") // ISO 4217
   baseAmount            Int // minor units
   adminFeeAmount        Int // minor units
   processingFeeAmount   Int // minor units
-  commissionAmount      Int? // Commission deducted from company payout (in pence) - FREE plan only
+  commissionAmount      Int? // Commission deducted from company payout (in minor units) - FREE plan only
   totalAmount           Int // minor units
   status                ExtraChargeStatus @default(PENDING) // PENDING | PAID | DECLINED | EXPIRED | CANCELLED
   stripeSessionId       String?
@@ -1046,21 +1060,24 @@ model WhatsAppMessage {
 }
 
 model TravellerProfile {
-  id                    String                      @id @default(cuid())
-  userId                String                      @unique
-  verificationStatus    TravellerVerificationStatus @default(NOT_STARTED)
-  idDocumentUrl         String?
-  selfieUrl             String?
-  flightTicketUrl       String?
-  idVerified            Boolean                     @default(false)
-  flightVerified        Boolean                     @default(false)
-  reviewedByAdminId     String?
-  reviewedAt            DateTime?
-  rejectionReason       String?
-  travellerRatingAvg    Float?
-  travellerRatingCount  Int                         @default(0)
-  createdAt             DateTime                    @default(now())
-  updatedAt             DateTime                    @updatedAt
+  id                      String                      @id @default(cuid())
+  userId                  String                      @unique
+  verificationStatus      TravellerVerificationStatus @default(NOT_STARTED)
+  idDocumentUrl           String?
+  selfieUrl               String?
+  flightTicketUrl         String?
+  idVerified              Boolean                     @default(false)
+  flightVerified          Boolean                     @default(false)
+  reviewedByAdminId       String?
+  reviewedAt              DateTime?
+  rejectionReason         String?
+  travellerRatingAvg      Float?
+  travellerRatingCount    Int                         @default(0)
+  stripeConnectAccountId  String?                     @unique
+  stripeConnectStatus     String                      @default("NOT_STARTED") // NOT_STARTED | IN_PROGRESS | COMPLETE
+  payoutsEnabled          Boolean                     @default(false)
+  createdAt               DateTime                    @default(now())
+  updatedAt               DateTime                    @updatedAt
 
   user User @relation(fields: [userId], references: [id])
 }
@@ -1111,6 +1128,7 @@ model TravelCourierBooking {
   riskFlags                       Json?
   pickupNotes                     String?
   deliveryNotes                   String?
+  currency                        String              @default("GBP") // ISO 4217 — listing currency at time of booking
   baseAmountMinor                 Int
   adminFeeAmountMinor             Int
   processingFeeMinor              Int
@@ -1125,6 +1143,9 @@ model TravelCourierBooking {
   disputeOpened                   Boolean             @default(false)
   payoutReleased                  Boolean             @default(false)
   payoutReleasedAt                DateTime?
+  stripeTransferId                String?
+  payoutTransferAmountMinor       Int?
+  platformFeeMinor                Int?
   createdAt                       DateTime            @default(now())
   updatedAt                       DateTime            @updatedAt
 
@@ -1165,6 +1186,11 @@ model TravelCourierDispute {
   resolutionNotes String?
   travellerResponse     String?
   travellerEvidence     Json?
+  refundType            String?                // NONE | FULL | PARTIAL
+  refundAmountMinor     Int?                   // minor units (pence/cents) — only set for PARTIAL
+  refundedAmountMinor   Int?                   // actual amount refunded via Stripe
+  stripeRefundId        String?
+  refundedAt            DateTime?
   createdAt       DateTime                     @default(now())
   updatedAt       DateTime                     @updatedAt
 

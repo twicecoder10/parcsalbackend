@@ -50,6 +50,7 @@ export interface CreateExtraChargeData {
   reason: 'EXCESS_WEIGHT' | 'EXTRA_ITEMS' | 'OVERSIZE' | 'REPACKING' | 'LATE_DROP_OFF' | 'OTHER';
   description?: string | null;
   evidenceUrls?: string[];
+  currency?: string;
   baseAmount: number;
   adminFeeAmount: number;
   processingFeeAmount: number;

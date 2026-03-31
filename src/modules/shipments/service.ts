@@ -241,6 +241,10 @@ export const shipmentService = {
       pricePerKg: dto.pricePerKg,
       pricePerItem: dto.pricePerItem,
       flatPrice: dto.flatPrice,
+      pricePerKgMinor: (dto as any).pricePerKgMinor ?? null,
+      pricePerItemMinor: (dto as any).pricePerItemMinor ?? null,
+      flatPriceMinor: (dto as any).flatPriceMinor ?? null,
+      currency: (dto as any).currency || 'GBP',
       cutoffTimeForReceivingItems: new Date(dto.cutoffTimeForReceivingItems),
       status: finalStatus,
       bookingNotes: dto.bookingNotes ?? null,
@@ -412,6 +416,7 @@ export const shipmentService = {
     if (dto.pricePerKg !== undefined) updateData.pricePerKg = dto.pricePerKg;
     if (dto.pricePerItem !== undefined) updateData.pricePerItem = dto.pricePerItem;
     if (dto.flatPrice !== undefined) updateData.flatPrice = dto.flatPrice;
+    if (dto.currency !== undefined) updateData.currency = dto.currency;
     if (dto.cutoffTimeForReceivingItems !== undefined) {
       updateData.cutoffTimeForReceivingItems = new Date(dto.cutoffTimeForReceivingItems);
     }
@@ -1031,6 +1036,7 @@ export const shipmentService = {
       requestedWeightKg: booking.requestedWeightKg,
       requestedItemsCount: booking.requestedItemsCount,
       price: Number(booking.calculatedPrice),
+      currency: (booking.payment?.currency ?? (shipment as any).currency ?? 'GBP').toUpperCase(),
       status: booking.status,
       createdAt: booking.createdAt,
     }));

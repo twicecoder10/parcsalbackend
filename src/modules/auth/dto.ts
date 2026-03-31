@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { flexibleCountryCodeValidator } from '../../utils/validators';
 
 export const registerCustomerSchema = z.object({
   body: z.object({
@@ -16,7 +17,7 @@ export const registerCompanyAdminSchema = z.object({
     fullName: z.string({ required_error: 'Full name is required' }).min(1, 'Full name is required'),
     companyName: z.string({ required_error: 'Company name is required' }).min(1, 'Company name is required'),
     companyDescription: z.string().optional(),
-    companyCountry: z.string({ required_error: 'Company country is required' }).min(1, 'Company country is required'),
+    companyCountry: flexibleCountryCodeValidator,
     companyCity: z.string({ required_error: 'Company city is required' }).min(1, 'Company city is required'),
     companyWebsite: z.string().url('Invalid website URL').optional().or(z.literal('')),
     companyLogoUrl: z.string().url('Invalid logo URL').optional().or(z.literal('')),

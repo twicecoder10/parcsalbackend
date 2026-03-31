@@ -1,13 +1,14 @@
 import { z } from 'zod';
+import { isoCurrencyCodeValidator, isoCountryCodeValidator, positiveAmountMinorValidator } from '../../utils/validators';
 
 // ─── Listing DTOs ───────────────────────────────────────────
 
 export const createListingSchema = z.object({
   body: z.object({
     originCity: z.string().min(1, 'Origin city is required'),
-    originCountry: z.string().min(1, 'Origin country is required'),
+    originCountry: isoCountryCodeValidator,
     destinationCity: z.string().min(1, 'Destination city is required'),
-    destinationCountry: z.string().min(1, 'Destination country is required'),
+    destinationCountry: isoCountryCodeValidator,
     departureDate: z.string().transform((s) => new Date(s)),
     arrivalDate: z
       .string()
@@ -16,8 +17,8 @@ export const createListingSchema = z.object({
     airlineName: z.string().optional(),
     flightReference: z.string().optional(),
     availableWeightKg: z.number().positive('Weight must be positive'),
-    pricePerKgMinor: z.number().int().positive('Price per kg must be a positive integer (minor units)'),
-    currency: z.string().default('GBP'),
+    pricePerKgMinor: positiveAmountMinorValidator,
+    currency: isoCurrencyCodeValidator.default('GBP'),
     notes: z.string().optional(),
     baggagePolicyNotes: z.string().optional(),
     cutoffDate: z
@@ -34,9 +35,9 @@ export const updateListingSchema = z.object({
   }),
   body: z.object({
     originCity: z.string().min(1).optional(),
-    originCountry: z.string().min(1).optional(),
+    originCountry: isoCountryCodeValidator.optional(),
     destinationCity: z.string().min(1).optional(),
-    destinationCountry: z.string().min(1).optional(),
+    destinationCountry: isoCountryCodeValidator.optional(),
     departureDate: z
       .string()
       .transform((s) => new Date(s))
@@ -49,8 +50,8 @@ export const updateListingSchema = z.object({
     airlineName: z.string().nullable().optional(),
     flightReference: z.string().nullable().optional(),
     availableWeightKg: z.number().positive().optional(),
-    pricePerKgMinor: z.number().int().positive().optional(),
-    currency: z.string().optional(),
+    pricePerKgMinor: positiveAmountMinorValidator.optional(),
+    currency: isoCurrencyCodeValidator.optional(),
     notes: z.string().nullable().optional(),
     baggagePolicyNotes: z.string().nullable().optional(),
     cutoffDate: z
@@ -72,8 +73,8 @@ export const searchListingsSchema = z.object({
   query: z.object({
     limit: z.string().optional(),
     offset: z.string().optional(),
-    originCountry: z.string().optional(),
-    destinationCountry: z.string().optional(),
+    originCountry: z.string().transform((v) => v.toUpperCase().trim()).optional(),
+    destinationCountry: z.string().transform((v) => v.toUpperCase().trim()).optional(),
     originCity: z.string().optional(),
     destinationCity: z.string().optional(),
     departureDateFrom: z.string().optional(),
@@ -209,8 +210,31 @@ export const adminUpdateDisputeSchema = z.object({
     adminNotes: z.string().optional(),
     resolutionNotes: z.string().optional(),
     releasePayout: z.boolean().optional(),
+    refundType: z.preprocess(
+      (v) => (typeof v === 'string' ? v.toUpperCase() : v),
+      z.enum(['NONE', 'FULL', 'PARTIAL'])
+    ).optional(),
+    refundAmountMinor: z.number().int().positive('Refund amount must be positive').optional(),
+  }).refine(
+    (data) => {
+      if (data.refundType === 'PARTIAL' && !data.refundAmountMinor) {
+        return false;
+      }
+      return true;
+    },
+    { message: 'refundAmountMinor is required when refundType is PARTIAL', path: ['refundAmountMinor'] }
+  ),
+});
+
+// ─── Traveller Connect DTOs ─────────────────────────────────
+
+export const travellerConnectOnboardSchema = z.object({
+  body: z.object({
+    returnUrl: z.string().url('Invalid return URL'),
   }),
 });
+
+export type TravellerConnectOnboardDto = z.infer<typeof travellerConnectOnboardSchema>['body'];
 
 // ─── Admin Flight Proof DTOs ────────────────────────────────
 

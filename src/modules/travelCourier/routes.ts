@@ -18,6 +18,7 @@ import {
   adminUpdateDisputeSchema,
   adminFlightProofListSchema,
   adminReviewFlightProofSchema,
+  travellerConnectOnboardSchema,
 } from './dto';
 
 const router = Router();
@@ -40,6 +41,38 @@ router.get(
   '/travellers/:userId/reviews',
   validate(travellerReviewsQuerySchema),
   travelCourierController.getTravellerReviews
+);
+
+// ─── Traveller Stripe Connect ───────────────────────────────
+router.post(
+  '/connect/onboard',
+  authenticate,
+  validate(travellerConnectOnboardSchema),
+  travelCourierController.createConnectOnboardingLink
+);
+
+router.get(
+  '/connect/status',
+  authenticate,
+  travelCourierController.getConnectStatus
+);
+
+router.post(
+  '/connect/dashboard-link',
+  authenticate,
+  travelCourierController.getConnectDashboardLink
+);
+
+router.get(
+  '/connect/balance',
+  authenticate,
+  travelCourierController.getConnectBalance
+);
+
+router.get(
+  '/earnings',
+  authenticate,
+  travelCourierController.getEarnings
 );
 
 // ─── Listing Management (traveller) ────────────────────────

@@ -10,6 +10,7 @@ import {
   DisputeResponseDto,
   AdminUpdateDisputeDto,
   AdminReviewFlightProofDto,
+  TravellerConnectOnboardDto,
 } from './dto';
 
 export const travelCourierController = {
@@ -292,6 +293,54 @@ export const travelCourierController = {
     try {
       const dto = req.body as AdminUpdateDisputeDto;
       const result = await travelCourierService.adminUpdateDispute(req.user!.id, req.params.id, dto);
+      res.status(200).json({ status: 'success', data: result });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // ─── Traveller Stripe Connect ─────────────────────────────
+
+  async createConnectOnboardingLink(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const dto = req.body as TravellerConnectOnboardDto;
+      const result = await travelCourierService.createConnectOnboardingLink(req, dto);
+      res.status(200).json({ status: 'success', data: result });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getConnectStatus(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const result = await travelCourierService.getConnectStatus(req);
+      res.status(200).json({ status: 'success', data: result });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getConnectDashboardLink(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const result = await travelCourierService.getConnectDashboardLink(req);
+      res.status(200).json({ status: 'success', data: result });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getConnectBalance(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const result = await travelCourierService.getConnectBalance(req);
+      res.status(200).json({ status: 'success', data: result });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getEarnings(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const result = await travelCourierService.getEarnings(req);
       res.status(200).json({ status: 'success', data: result });
     } catch (error) {
       next(error);

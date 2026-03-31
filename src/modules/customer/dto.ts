@@ -1,12 +1,12 @@
 import { z } from 'zod';
-import { bookingIdValidator } from '../../utils/validators';
+import { bookingIdValidator, flexibleCountryCodeOptional, normalizeCountryCode } from '../../utils/validators';
 
 export const completeCustomerOnboardingSchema = z.object({
   body: z.object({
     phoneNumber: z.string().min(1, 'Phone number is required'),
     city: z.string().min(1, 'City is required'),
     address: z.string().optional(),
-    country: z.string().optional(),
+    country: z.string().transform((v) => normalizeCountryCode(v)).optional(),
     preferredShippingMode: z.enum(['AIR_CARGO', 'SEA_CARGO', 'AIR_FREIGHT']).optional(),
     notificationEmail: z.boolean().optional().default(true),
     notificationSMS: z.boolean().optional().default(false),
@@ -21,7 +21,7 @@ export const updateCustomerProfileSchema = z.object({
       phoneNumber: z.string().optional(),
       city: z.string().optional(),
       address: z.string().optional().nullable(),
-      country: z.string().optional().nullable(),
+      country: flexibleCountryCodeOptional,
       currentPassword: z.string().optional(),
       newPassword: z.string().min(8, 'New password must be at least 8 characters').optional(),
     })

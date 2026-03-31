@@ -10,7 +10,15 @@ import { createNotification, createCompanyNotification } from '../../utils/notif
 import { emailService } from '../../config/email';
 import { generatePaymentId } from '../../utils/paymentId';
 import { calculateBookingCharges } from '../../utils/paymentCalculator';
+import { formatMoney, isSupportedCurrency, type SupportedCurrency } from '../../utils/money';
 import { captureEvent } from '../../lib/posthog';
+
+/** Format a payment amount (in minor units) with the correct currency symbol. */
+function formatPaymentAmount(amountMinor: number, currencyCode: string): string {
+  const upper = currencyCode.toUpperCase();
+  const currency = isSupportedCurrency(upper) ? (upper as SupportedCurrency) : 'GBP';
+  return formatMoney({ amountMinor, currency });
+}
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16',
@@ -70,9 +78,10 @@ export const paymentService = {
 
     // Calculate fees - adminFeeAmount is ALWAYS 15% (charged to customer)
     // This is separate from commission (which is only deducted from FREE plan companies)
+    const bookingCurrency = ((booking as any).currency || 'GBP').toUpperCase();
     const baseAmountMinor = Math.round(Number(booking.calculatedPrice) * 100);
     const ADMIN_FEE_BPS = 1500; // Always 15% admin fee charged to customer
-    const charges = calculateBookingCharges(baseAmountMinor, ADMIN_FEE_BPS);
+    const charges = calculateBookingCharges(baseAmountMinor, ADMIN_FEE_BPS, bookingCurrency as any);
 
     // Calculate commission amount deducted from company payout
     // For FREE plan: commissionAmount = adminFeeAmount (15% deducted from company)
@@ -98,7 +107,7 @@ export const paymentService = {
       line_items: [
         {
           price_data: {
-            currency: 'gbp',
+            currency: bookingCurrency.toLowerCase(),
             product_data: {
               name: `Shipment Booking - ${booking.shipmentSlot.originCity} to ${booking.shipmentSlot.destinationCity}`,
               description: `Booking ID: ${booking.id}`,
@@ -363,7 +372,7 @@ export const paymentService = {
         userId: bookingWithDetails.customerId,
         type: 'PAYMENT_SUCCESS',
         title: 'Payment Successful',
-        body: `Your payment of £${(Number(paymentIntent.amount) / 100).toFixed(2)} for booking from ${bookingWithDetails.shipmentSlot.originCity} to ${bookingWithDetails.shipmentSlot.destinationCity} has been processed successfully`,
+        body: `Your payment of ${formatPaymentAmount(Number(paymentIntent.amount), paymentIntent.currency)} for booking from ${bookingWithDetails.shipmentSlot.originCity} to ${bookingWithDetails.shipmentSlot.destinationCity} has been processed successfully`,
         metadata: {
           bookingId,
           paymentIntentId,
@@ -379,7 +388,7 @@ export const paymentService = {
           bookingWithDetails.companyId,
           'PAYMENT_SUCCESS',
           'Payment Received',
-          `Payment of £${(Number(paymentIntent.amount) / 100).toFixed(2)} received for booking ${bookingId}`,
+          `Payment of ${formatPaymentAmount(Number(paymentIntent.amount), paymentIntent.currency)} received for booking ${bookingId}`,
           {
             bookingId,
             paymentIntentId,
@@ -845,7 +854,7 @@ export const paymentService = {
               userId: updatedExtraCharge.booking.customerId,
               type: 'PAYMENT_SUCCESS',
               title: 'Extra Charge Paid',
-              body: `Your extra charge of £${(updatedExtraCharge.totalAmount / 100).toFixed(2)} has been successfully paid for booking ${updatedExtraCharge.bookingId}`,
+              body: `Your extra charge of ${formatPaymentAmount(updatedExtraCharge.totalAmount, (updatedExtraCharge as any).currency || 'GBP')} has been successfully paid for booking ${updatedExtraCharge.bookingId}`,
               metadata: {
                 bookingId: updatedExtraCharge.bookingId,
                 extraChargeId: updatedExtraCharge.id,
@@ -863,7 +872,7 @@ export const paymentService = {
                 updatedExtraCharge.bookingId,
                 updatedExtraCharge.id,
                 updatedExtraCharge.totalAmount,
-                'gbp',
+                ((updatedExtraCharge as any).currency || 'GBP').toLowerCase(),
                 updatedExtraCharge.reason,
                 paymentIntentId,
                 updatedExtraCharge.paidAt,
@@ -886,7 +895,7 @@ export const paymentService = {
                 updatedExtraCharge.companyId,
                 'PAYMENT_SUCCESS',
                 'Extra Charge Paid',
-                `Extra charge of £${(updatedExtraCharge.totalAmount / 100).toFixed(2)} has been paid for booking ${updatedExtraCharge.bookingId}`,
+                `Extra charge of ${formatPaymentAmount(updatedExtraCharge.totalAmount, (updatedExtraCharge as any).currency || 'GBP')} has been paid for booking ${updatedExtraCharge.bookingId}`,
                 {
                   bookingId: updatedExtraCharge.bookingId,
                   extraChargeId: updatedExtraCharge.id,
@@ -1049,7 +1058,7 @@ export const paymentService = {
               userId: updatedExtraCharge.booking.customerId,
               type: 'PAYMENT_SUCCESS',
               title: 'Extra Charge Paid',
-              body: `Your extra charge of £${(updatedExtraCharge.totalAmount / 100).toFixed(2)} has been successfully paid for booking ${updatedExtraCharge.bookingId}`,
+              body: `Your extra charge of ${formatPaymentAmount(updatedExtraCharge.totalAmount, (updatedExtraCharge as any).currency || 'GBP')} has been successfully paid for booking ${updatedExtraCharge.bookingId}`,
               metadata: {
                 bookingId: updatedExtraCharge.bookingId,
                 extraChargeId: updatedExtraCharge.id,
@@ -1067,7 +1076,7 @@ export const paymentService = {
                 updatedExtraCharge.bookingId,
                 updatedExtraCharge.id,
                 updatedExtraCharge.totalAmount,
-                'gbp',
+                ((updatedExtraCharge as any).currency || 'GBP').toLowerCase(),
                 updatedExtraCharge.reason,
                 paymentIntent.id,
                 updatedExtraCharge.paidAt,
@@ -1090,7 +1099,7 @@ export const paymentService = {
                 extraCharge.companyId,
                 'PAYMENT_SUCCESS',
                 'Extra Charge Paid',
-                `Extra charge of £${(extraCharge.totalAmount / 100).toFixed(2)} has been paid for booking ${extraCharge.bookingId}`,
+                `Extra charge of ${formatPaymentAmount(extraCharge.totalAmount, (extraCharge as any).currency || 'GBP')} has been paid for booking ${extraCharge.bookingId}`,
                 {
                   bookingId: extraCharge.bookingId,
                   extraChargeId: extraCharge.id,
@@ -1368,7 +1377,7 @@ export const paymentService = {
               userId: booking.customerId,
               type: 'PAYMENT_REFUNDED',
               title: 'Payment Refunded',
-              body: `Your payment of £${Number(payment.amount).toFixed(2)} for booking from ${booking.shipmentSlot.originCity} to ${booking.shipmentSlot.destinationCity} has been refunded`,
+              body: `Your payment of ${formatPaymentAmount(Math.round(Number(payment.amount) * 100), payment.currency)} for booking from ${booking.shipmentSlot.originCity} to ${booking.shipmentSlot.destinationCity} has been refunded`,
               metadata: {
                 bookingId: payment.bookingId,
                 paymentId: payment.id,
@@ -1613,7 +1622,58 @@ export const paymentService = {
         };
       }
 
-      return { received: true, message: 'Account updated but company not found', eventType: event.type };
+      // Not a company — check if it's a traveller Connect account
+      const travellerProfile = await prisma.travellerProfile.findFirst({
+        where: { stripeConnectAccountId: account.id },
+      });
+
+      if (travellerProfile) {
+        let connectStatus: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETE' = 'NOT_STARTED';
+        if (account.details_submitted && account.charges_enabled && account.payouts_enabled) {
+          connectStatus = 'COMPLETE';
+        } else if (account.details_submitted || account.charges_enabled || account.payouts_enabled) {
+          connectStatus = 'IN_PROGRESS';
+        }
+
+        const payoutsEnabled = account.payouts_enabled || false;
+
+        const updateData: any = {
+          stripeConnectStatus: connectStatus,
+          payoutsEnabled,
+        };
+
+        if (payoutsEnabled && travellerProfile.verificationStatus !== 'VERIFIED') {
+          updateData.verificationStatus = 'VERIFIED';
+          updateData.idVerified = true;
+        }
+
+        await prisma.travellerProfile.update({
+          where: { id: travellerProfile.id },
+          data: updateData,
+        });
+
+        if (payoutsEnabled && travellerProfile.verificationStatus !== 'VERIFIED') {
+          await createNotification({
+            userId: travellerProfile.userId,
+            type: 'TRAVELLER_VERIFIED' as any,
+            title: 'Traveller Verification Complete',
+            body: 'Your Stripe Connect setup is complete. You are now verified and can create courier listings.',
+            metadata: { travellerProfileId: travellerProfile.id },
+          }).catch((err) => {
+            console.error('[Payment Webhook] Failed to notify traveller verification:', err);
+          });
+        }
+
+        return {
+          received: true,
+          message: 'Traveller Connect account status updated',
+          eventType: event.type,
+          travellerProfileId: travellerProfile.id,
+          payoutsEnabled,
+        };
+      }
+
+      return { received: true, message: 'Account updated but no matching company or traveller found', eventType: event.type };
     }
 
     // Handle Stripe Connect account.application.deauthorized event
@@ -1957,14 +2017,14 @@ export const paymentService = {
           destinationCountry: extraCharge.booking.shipmentSlot.destinationCountry,
         },
       },
-      amount: extraCharge.totalAmount / 100, // Convert from pence to pounds
+      amount: extraCharge.totalAmount / 100,
       baseAmount: extraCharge.baseAmount / 100,
       adminFeeAmount: extraCharge.adminFeeAmount / 100,
       processingFeeAmount: extraCharge.processingFeeAmount / 100,
       commissionAmount: (extraCharge as any).commissionAmount ? (extraCharge as any).commissionAmount / 100 : null,
       totalAmount: extraCharge.totalAmount / 100,
-      currency: 'GBP',
-      status: 'SUCCEEDED', // Extra charges in this list are always paid/succeeded
+      currency: ((extraCharge as any).currency || 'GBP').toUpperCase(),
+      status: 'SUCCEEDED',
       paymentMethod: 'card',
       stripePaymentIntentId: extraCharge.stripePaymentIntentId || null,
       stripeChargeId: null,
@@ -2115,7 +2175,7 @@ export const paymentService = {
       processingFeeAmount: extraCharge.processingFeeAmount / 100,
       commissionAmount: (extraCharge as any).commissionAmount ? (extraCharge as any).commissionAmount / 100 : null,
       totalAmount: extraCharge.totalAmount / 100,
-      currency: 'GBP',
+      currency: ((extraCharge as any).currency || 'GBP').toUpperCase(),
       status: extraCharge.status === 'PAID' ? 'SUCCEEDED' : extraCharge.status,
       paymentMethod: 'card',
       stripePaymentIntentId: extraCharge.stripePaymentIntentId || null,
@@ -2351,7 +2411,7 @@ export const paymentService = {
         userId: extraCharge.booking.customer.id,
         type: 'PAYMENT_REFUNDED',
         title: 'Extra Charge Refunded',
-        body: `Your extra charge payment of £${refundAmount.toFixed(2)} for booking from ${extraCharge.booking.shipmentSlot.originCity} to ${extraCharge.booking.shipmentSlot.destinationCity} has been refunded${dto.reason ? `. Reason: ${dto.reason}` : ''}`,
+        body: `Your extra charge payment of ${formatPaymentAmount(Math.round(refundAmount * 100), (extraCharge as any).currency || 'GBP')} for booking from ${extraCharge.booking.shipmentSlot.originCity} to ${extraCharge.booking.shipmentSlot.destinationCity} has been refunded${dto.reason ? `. Reason: ${dto.reason}` : ''}`,
         metadata: {
           bookingId: extraCharge.bookingId,
           extraChargeId: extraCharge.id,
@@ -2381,7 +2441,7 @@ export const paymentService = {
           },
         },
         amount: totalAmountInPounds,
-        currency: 'GBP',
+        currency: ((updatedExtraCharge as any).currency || 'GBP').toUpperCase(),
         status: updatedExtraCharge.status,
         paymentMethod: 'card',
         stripePaymentIntentId: updatedExtraCharge.stripePaymentIntentId,
@@ -2496,7 +2556,7 @@ export const paymentService = {
         userId: booking.customerId,
         type: 'PAYMENT_REFUNDED',
         title: 'Payment Refunded',
-        body: `Your payment of £${refundAmount.toFixed(2)} for booking from ${booking.shipmentSlot.originCity} to ${booking.shipmentSlot.destinationCity} has been refunded${dto.reason ? `. Reason: ${dto.reason}` : ''}`,
+        body: `Your payment of ${formatPaymentAmount(Math.round(refundAmount * 100), payment.currency)} for booking from ${booking.shipmentSlot.originCity} to ${booking.shipmentSlot.destinationCity} has been refunded${dto.reason ? `. Reason: ${dto.reason}` : ''}`,
         metadata: {
           bookingId: payment.bookingId,
           paymentId: payment.id,

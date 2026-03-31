@@ -268,16 +268,18 @@ export const bookingService = {
         select: { name: true },
       });
 
-      // Create booking
+      // Create booking — capture the listing's currency at time of booking
+      const slotCurrency = ((shipmentSlot as any).currency || 'GBP').toUpperCase();
       const bookingData: CreateBookingData = {
         id: bookingId,
         shipmentSlotId: dto.shipmentSlotId,
         customerId,
         companyId: shipmentSlot.companyId,
-        companyName: company?.name || null, // Preserve company name for customer reference
+        companyName: company?.name || null,
         requestedWeightKg: dto.requestedWeightKg || null,
         requestedItemsCount: dto.requestedItemsCount || null,
         calculatedPrice: new Decimal(calculatedPrice),
+        currency: slotCurrency,
         notes: dto.notes || null,
         status: 'PENDING',
         paymentStatus: 'PENDING',
@@ -965,9 +967,10 @@ export const bookingService = {
 
       // Calculate fees - adminFeeAmount is ALWAYS 15% (charged to customer)
       // This is separate from commission (which is only deducted from FREE plan companies)
+      const bookingCurrency = ((booking as any).currency || 'GBP').toUpperCase();
       const baseAmountMinor = Math.round(Number(booking.calculatedPrice) * 100);
       const ADMIN_FEE_BPS = 1500; // Always 15% admin fee charged to customer
-      const charges = calculateBookingCharges(baseAmountMinor, ADMIN_FEE_BPS);
+      const charges = calculateBookingCharges(baseAmountMinor, ADMIN_FEE_BPS, bookingCurrency as any);
       
       // Calculate commission amount deducted from company payout
       const companyPlan = company?.plan || 'FREE';

@@ -3,28 +3,54 @@
  * 
  * Calculates booking charges including:
  * - Base amount (shipment price)
- * - Admin fee (15% of base amount, capped at £10)
- * - Processing fee (grossed-up so Stripe fees are covered by the customer; configured percent + fixed fee)
+ * - Admin fee (15% of base amount, capped per currency)
+ * - Processing fee (grossed-up so Stripe fees are covered by the customer)
  * - Total amount
  * 
- * All amounts are in MINOR units (pence for GBP)
+ * All amounts are in MINOR units (pence/cents).
  */
 
+import {
+  type SupportedCurrency,
+  minorToMajor as moneyMinorToMajor,
+  majorToMinor as moneyMajorToMinor,
+} from './money';
+
 export interface BookingCharges {
-  baseAmount: number;        // Shipment price in minor units
-  adminFeeAmount: number;     // Parcsal admin fee in minor units
-  processingFeeAmount: number; // Stripe processing fee in minor units
-  totalAmount: number;        // Total amount in minor units
+  baseAmount: number;
+  adminFeeAmount: number;
+  processingFeeAmount: number;
+  totalAmount: number;
+}
+
+export interface StripeReadyAmount {
+  amountMinor: number;
+  currency: string;
 }
 
 /**
- * Calculate booking charges
- * 
- * @param baseAmountMinor - Base shipment price in minor units (pence)
- * @param commissionBps - Optional commission rate in basis points (e.g., 1500 = 15.00%). Defaults to 1500 (15%)
- * @returns BookingCharges object with all amounts in minor units
+ * Admin-fee cap per currency in minor units.
+ * Roughly equivalent across currencies (~£10 / $13 / €12 / CA$17).
  */
-export function calculateBookingCharges(baseAmountMinor: number, commissionBps: number = 1500): BookingCharges {
+const ADMIN_FEE_CAP: Record<SupportedCurrency, number> = {
+  GBP: 1000,
+  USD: 1300,
+  EUR: 1200,
+  CAD: 1700,
+};
+
+/**
+ * Calculate booking charges.
+ *
+ * @param baseAmountMinor - Base shipment price in minor units
+ * @param commissionBps - Commission rate in basis points (default 1500 = 15%)
+ * @param currency - ISO 4217 currency code (default GBP)
+ */
+export function calculateBookingCharges(
+  baseAmountMinor: number,
+  commissionBps: number = 1500,
+  currency: SupportedCurrency = 'GBP',
+): BookingCharges {
   if (!Number.isFinite(baseAmountMinor) || baseAmountMinor < 0) {
     throw new Error('Base amount must be a non-negative finite number');
   }
@@ -33,41 +59,31 @@ export function calculateBookingCharges(baseAmountMinor: number, commissionBps: 
     throw new Error('Commission rate must be between 0 and 10000 basis points (0-100%)');
   }
 
-  // -----------------------------
-  // Config (minor units)
-  // -----------------------------
-  const COMMISSION_PERCENT = commissionBps / 10000; // Convert basis points to decimal (1500 bps = 0.15 = 15%)
+  const COMMISSION_PERCENT = commissionBps / 10000;
 
-  // Stripe processing fee estimate used for gross-up. Actual Stripe fees can vary by payment method/card.
-  // Configure via env to match your Stripe account pricing.
   const STRIPE_PERCENT = Number(process.env.STRIPE_FEE_PERCENT ?? '0.0325');
-  const STRIPE_FIXED_MINOR = Number(process.env.STRIPE_FEE_FIXED_MINOR ?? '20');
 
   if (!Number.isFinite(STRIPE_PERCENT) || STRIPE_PERCENT < 0 || STRIPE_PERCENT >= 1) {
     throw new Error('STRIPE_FEE_PERCENT must be a number in [0, 1)');
   }
-  if (!Number.isFinite(STRIPE_FIXED_MINOR) || STRIPE_FIXED_MINOR < 0) {
-    throw new Error('STRIPE_FEE_FIXED_MINOR must be a non-negative number');
-  }
 
-  // -----------------------------
-  // Admin fee (commission) - capped at £10 (1000 pence)
-  // -----------------------------
-  const ADMIN_FEE_CAP_MINOR = 1000; // £10 cap in minor units (pence)
+  // Stripe fixed fee per currency (in minor units)
+  const STRIPE_FIXED_BY_CURRENCY: Record<SupportedCurrency, number> = {
+    GBP: 20, // £0.20
+    USD: 30, // $0.30
+    EUR: 25, // €0.25
+    CAD: 30, // CA$0.30
+  };
+  const STRIPE_FIXED_MINOR = STRIPE_FIXED_BY_CURRENCY[currency] ?? 20;
+
+  const capMinor = ADMIN_FEE_CAP[currency] ?? ADMIN_FEE_CAP.GBP;
   const calculatedAdminFee = Math.round(baseAmountMinor * COMMISSION_PERCENT);
-  const adminFeeAmount = Math.min(calculatedAdminFee, ADMIN_FEE_CAP_MINOR);
+  const adminFeeAmount = Math.min(calculatedAdminFee, capMinor);
 
-  // -----------------------------
-  // Gross-up total so that:
-  //   total - (total*STRIPE_PERCENT + STRIPE_FIXED) = base + adminFee
-  // => total = (base + adminFee + STRIPE_FIXED) / (1 - STRIPE_PERCENT)
-  // We ceil to ensure we never under-collect.
-  // -----------------------------
   const grossedUpTotal = Math.ceil(
     (baseAmountMinor + adminFeeAmount + STRIPE_FIXED_MINOR) / (1 - STRIPE_PERCENT)
   );
 
-  // The processing fee we display/record is simply the remainder after base + admin.
   const processingFeeAmount = grossedUpTotal - baseAmountMinor - adminFeeAmount;
 
   return {
@@ -79,22 +95,31 @@ export function calculateBookingCharges(baseAmountMinor: number, commissionBps: 
 }
 
 /**
- * Convert minor units to major units (pence to pounds)
- * 
- * @param minorAmount - Amount in minor units
- * @returns Amount in major units
+ * Build a Stripe-ready payment descriptor from charges + currency.
  */
-export function minorToMajor(minorAmount: number): number {
-  return minorAmount / 100;
+export function toStripeAmount(
+  totalAmountMinor: number,
+  currency: SupportedCurrency,
+): StripeReadyAmount {
+  return {
+    amountMinor: totalAmountMinor,
+    currency: currency.toLowerCase(),
+  };
 }
 
 /**
- * Convert major units to minor units (pounds to pence)
- * 
- * @param majorAmount - Amount in major units
- * @returns Amount in minor units
+ * Convert minor units to major units (pence to pounds, cents to dollars, etc.)
+ * @deprecated Prefer the currency-aware version from `src/utils/money.ts`
+ */
+export function minorToMajor(minorAmount: number): number {
+  return moneyMinorToMajor(minorAmount, 'GBP');
+}
+
+/**
+ * Convert major units to minor units (pounds to pence, dollars to cents, etc.)
+ * @deprecated Prefer the currency-aware version from `src/utils/money.ts`
  */
 export function majorToMinor(majorAmount: number): number {
-  return Math.round(majorAmount * 100);
+  return moneyMajorToMinor(majorAmount, 'GBP');
 }
 

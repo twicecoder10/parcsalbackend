@@ -12,6 +12,7 @@ export interface CreateBookingData {
   requestedWeightKg?: number | null;
   requestedItemsCount?: number | null;
   calculatedPrice: Decimal;
+  currency?: string;
   notes?: string | null;
   status: BookingStatus;
   paymentStatus: 'PENDING' | 'PAID' | 'REFUNDED';

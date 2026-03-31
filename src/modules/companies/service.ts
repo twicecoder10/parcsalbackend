@@ -1463,10 +1463,16 @@ export const companyService = {
         companyId,
         name: dto.name,
         address: dto.address,
+        addressLine1: dto.address,
+        addressLine2: (dto as any).addressLine2 || null,
         city: dto.city,
         state: dto.state || null,
+        stateOrProvince: dto.state || null,
         country: dto.country,
+        countryCode: dto.country,
         postalCode: dto.postalCode || null,
+        latitude: (dto as any).latitude ?? null,
+        longitude: (dto as any).longitude ?? null,
         isDefault: dto.isDefault || false,
       },
     });
@@ -1533,12 +1539,24 @@ export const companyService = {
 
     const updateData: any = {};
     if (dto.name !== undefined) updateData.name = dto.name;
-    if (dto.address !== undefined) updateData.address = dto.address;
+    if (dto.address !== undefined) {
+      updateData.address = dto.address;
+      updateData.addressLine1 = dto.address;
+    }
     if (dto.city !== undefined) updateData.city = dto.city;
-    if (dto.state !== undefined) updateData.state = dto.state || null;
-    if (dto.country !== undefined) updateData.country = dto.country;
+    if (dto.state !== undefined) {
+      updateData.state = dto.state || null;
+      updateData.stateOrProvince = dto.state || null;
+    }
+    if (dto.country !== undefined) {
+      updateData.country = dto.country;
+      updateData.countryCode = dto.country;
+    }
     if (dto.postalCode !== undefined) updateData.postalCode = dto.postalCode || null;
     if (dto.isDefault !== undefined) updateData.isDefault = dto.isDefault;
+    if ((dto as any).addressLine2 !== undefined) updateData.addressLine2 = (dto as any).addressLine2 || null;
+    if ((dto as any).latitude !== undefined) updateData.latitude = (dto as any).latitude ?? null;
+    if ((dto as any).longitude !== undefined) updateData.longitude = (dto as any).longitude ?? null;
 
     const warehouseAddress = await prisma.warehouseAddress.update({
       where: { id: warehouseId },

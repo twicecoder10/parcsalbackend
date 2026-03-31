@@ -9,6 +9,7 @@ import {
 } from '../../utils/errors';
 import { parsePagination, createPaginatedResponse } from '../../utils/pagination';
 import { calculateBookingCharges } from '../../utils/paymentCalculator';
+import { type SupportedCurrency } from '../../utils/money';
 import { createNotification, createSuperAdminNotification } from '../../utils/notifications';
 import { scanTravelCourierItemRisk } from '../../utils/travelItemRiskScanner';
 import { generateTravelCourierBookingId } from '../../utils/bookingId';
@@ -21,6 +22,7 @@ import {
   DisputeResponseDto,
   AdminUpdateDisputeDto,
   AdminReviewFlightProofDto,
+  TravellerConnectOnboardDto,
 } from './dto';
 
 const stripe = new Stripe(config.stripe.secretKey, {
@@ -33,10 +35,69 @@ async function requireVerifiedTraveller(userId: string) {
   });
   if (!profile || profile.verificationStatus !== 'VERIFIED') {
     throw new ForbiddenError(
-      'Traveller verification is required before you can perform this action'
+      'Traveller verification is required before you can perform this action. Please complete Stripe Connect onboarding.'
+    );
+  }
+  if (!(profile as any).payoutsEnabled || !(profile as any).stripeConnectAccountId) {
+    throw new ForbiddenError(
+      'Payout setup is required before you can perform this action. Please complete Stripe Connect onboarding.'
     );
   }
   return profile;
+}
+
+/**
+ * Transfer payout to traveller's Stripe Connect account.
+ * Calculates platform commission and creates the transfer.
+ */
+async function transferPayoutToTraveller(booking: any) {
+  const profile = await prisma.travellerProfile.findUnique({
+    where: { userId: booking.listing.userId },
+  });
+
+  const connectAccountId = (profile as any)?.stripeConnectAccountId;
+  const payoutsEnabled = (profile as any)?.payoutsEnabled;
+
+  if (!connectAccountId || !payoutsEnabled) {
+    console.error(`[TravelCourier Payout] Traveller ${booking.listing.userId} has no Connect account for booking ${booking.id}`);
+    return null;
+  }
+
+  const commissionBps = config.travelCourier.commissionBps;
+  const platformFeeMinor = Math.round(booking.baseAmountMinor * commissionBps / 10000);
+  const transferAmount = booking.baseAmountMinor - platformFeeMinor;
+
+  if (transferAmount <= 0) {
+    console.error(`[TravelCourier Payout] Transfer amount is zero or negative for booking ${booking.id}`);
+    return null;
+  }
+
+  const bookingCurrency = (booking.currency || 'GBP').toLowerCase();
+
+  const transfer = await stripe.transfers.create({
+    amount: transferAmount,
+    currency: bookingCurrency,
+    destination: connectAccountId,
+    metadata: {
+      bookingId: booking.id,
+      listingId: booking.listingId,
+      travellerId: booking.listing.userId,
+      baseAmount: booking.baseAmountMinor.toString(),
+      platformFee: platformFeeMinor.toString(),
+      commissionBps: commissionBps.toString(),
+    },
+  });
+
+  await prisma.travelCourierBooking.update({
+    where: { id: booking.id },
+    data: {
+      stripeTransferId: transfer.id,
+      payoutTransferAmountMinor: transferAmount,
+      platformFeeMinor,
+    } as any,
+  });
+
+  return { transferId: transfer.id, transferAmount, platformFeeMinor };
 }
 
 export const travelCourierService = {
@@ -391,8 +452,9 @@ export const travelCourierService = {
       );
     }
 
+    const listingCurrency = (listing.currency || 'GBP').toUpperCase() as SupportedCurrency;
     const baseAmountMinor = Math.round(dto.requestedWeightKg * listing.pricePerKgMinor);
-    const charges = calculateBookingCharges(baseAmountMinor);
+    const charges = calculateBookingCharges(baseAmountMinor, 1500, listingCurrency);
 
     const bookingId = await generateTravelCourierBookingId();
 
@@ -409,6 +471,7 @@ export const travelCourierService = {
         riskFlags: riskScan.flags.length > 0 ? riskScan.flags : undefined,
         pickupNotes: dto.pickupNotes,
         deliveryNotes: dto.deliveryNotes,
+        currency: listingCurrency,
         baseAmountMinor: charges.baseAmount,
         adminFeeAmountMinor: charges.adminFeeAmount,
         processingFeeMinor: charges.processingFeeAmount,
@@ -810,6 +873,10 @@ export const travelCourierService = {
       },
     });
 
+    await transferPayoutToTraveller(booking).catch((err) => {
+      console.error(`[TravelCourier Payout] Transfer failed for booking ${booking.id}:`, err);
+    });
+
     await createNotification({
       userId: booking.listing.userId,
       type: 'TRAVEL_PAYOUT_RELEASED' as any,
@@ -856,6 +923,10 @@ export const travelCourierService = {
             payoutReleasedAt: now,
             status: 'COMPLETED',
           },
+        });
+
+        await transferPayoutToTraveller(booking).catch((err) => {
+          console.error(`[TravelCourier AutoRelease] Transfer failed for booking ${booking.id}:`, err);
         });
 
         await createNotification({
@@ -1267,15 +1338,75 @@ export const travelCourierService = {
     });
     if (!dispute) throw new NotFoundError('Dispute not found');
 
+    const refundType = dto.refundType || 'NONE';
+    let refundedAmountMinor: number | null = null;
+    let stripeRefundId: string | null = null;
+
+    // ── Process refund if requested (available on any status path) ──
+    if (refundType !== 'NONE') {
+      const booking = dispute.booking;
+
+      if (!booking.stripePaymentIntentId) {
+        throw new BadRequestError('Booking has no payment intent — cannot process refund');
+      }
+
+      if ((dispute as any).refundedAt) {
+        throw new BadRequestError('A refund has already been processed for this dispute');
+      }
+
+      const paymentIntent = await stripe.paymentIntents.retrieve(booking.stripePaymentIntentId);
+      const chargeId = paymentIntent.latest_charge as string;
+      if (!chargeId) {
+        throw new BadRequestError('No Stripe charge found for this booking payment');
+      }
+
+      if (refundType === 'FULL') {
+        refundedAmountMinor = booking.totalAmountMinor;
+      } else {
+        refundedAmountMinor = dto.refundAmountMinor!;
+        if (refundedAmountMinor > booking.totalAmountMinor) {
+          throw new BadRequestError(
+            `Refund amount (${refundedAmountMinor}) exceeds booking total (${booking.totalAmountMinor})`
+          );
+        }
+      }
+
+      const hasTransfer = paymentIntent.transfer_data?.destination;
+
+      const stripeRefund = await stripe.refunds.create({
+        charge: chargeId,
+        amount: refundedAmountMinor,
+        reverse_transfer: hasTransfer ? true : undefined,
+        reason: 'requested_by_customer',
+        metadata: {
+          disputeId,
+          bookingId: booking.id,
+          refundType,
+          adminNotes: dto.adminNotes || '',
+        },
+      });
+
+      stripeRefundId = stripeRefund.id;
+    }
+
+    // ── Update dispute record ───────────────────────────────────
     const updated = await prisma.travelCourierDispute.update({
       where: { id: disputeId },
       data: {
         status: dto.status as any,
         adminNotes: dto.adminNotes,
         resolutionNotes: dto.resolutionNotes,
+        ...(refundType !== 'NONE' && {
+          refundType,
+          refundAmountMinor: dto.refundAmountMinor || null,
+          refundedAmountMinor,
+          stripeRefundId,
+          refundedAt: new Date(),
+        }),
       },
     });
 
+    // ── Status-specific side effects ────────────────────────────
     if (dto.status === 'RESOLVED_FOR_TRAVELLER' && dto.releasePayout) {
       await prisma.travelCourierBooking.update({
         where: { id: dispute.bookingId },
@@ -1284,6 +1415,10 @@ export const travelCourierService = {
           payoutReleasedAt: new Date(),
           status: 'COMPLETED',
         },
+      });
+
+      await transferPayoutToTraveller(dispute.booking).catch((err) => {
+        console.error(`[TravelCourier Payout] Transfer failed for dispute booking ${dispute.bookingId}:`, err);
       });
 
       await createNotification({
@@ -1296,13 +1431,30 @@ export const travelCourierService = {
     }
 
     if (dto.status === 'RESOLVED_FOR_CUSTOMER') {
-      // TODO: Implement automated refund flow
       await prisma.travelCourierBooking.update({
         where: { id: dispute.bookingId },
         data: { status: 'CANCELLED' },
       });
     }
 
+    // ── Refund notification (independent of status) ─────────────
+    if (refundType !== 'NONE' && refundedAmountMinor) {
+      const currency = (dispute.booking as any).currency || 'GBP';
+      const amountFormatted = (refundedAmountMinor / 100).toFixed(2);
+      const refundLabel = refundType === 'FULL' ? 'full' : 'partial';
+
+      await createNotification({
+        userId: dispute.booking.customerId,
+        type: 'TRAVEL_DISPUTE_REFUND' as any,
+        title: 'Refund Processed',
+        body: `A ${refundLabel} refund of ${currency} ${amountFormatted} has been issued for booking ${dispute.bookingId}.`,
+        metadata: { bookingId: dispute.bookingId, disputeId, refundType, refundedAmountMinor },
+      }).catch((err) => {
+        console.error('Failed to create refund notification:', err);
+      });
+    }
+
+    // ── Status-change notifications to both parties ─────────────
     await createNotification({
       userId: dispute.booking.customerId,
       type: 'TRAVEL_DISPUTE_UPDATED' as any,
@@ -1320,5 +1472,269 @@ export const travelCourierService = {
     });
 
     return updated;
+  },
+
+  // ─── Traveller Stripe Connect ─────────────────────────────
+
+  async createConnectOnboardingLink(req: AuthRequest, dto: TravellerConnectOnboardDto) {
+    if (!req.user) throw new ForbiddenError();
+
+    let profile = await prisma.travellerProfile.findUnique({
+      where: { userId: req.user.id },
+    });
+
+    if (!profile) {
+      profile = await prisma.travellerProfile.create({
+        data: { userId: req.user.id },
+      });
+    }
+
+    let accountId = (profile as any).stripeConnectAccountId as string | null;
+
+    if (!accountId) {
+      const user = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { email: true, fullName: true, country: true },
+      });
+
+      const countryCode = user?.country?.toUpperCase().trim().length === 2
+        ? user.country.toUpperCase().trim()
+        : 'GB';
+
+      const account = await stripe.accounts.create({
+        type: 'express',
+        country: countryCode,
+        email: user?.email || undefined,
+        capabilities: {
+          card_payments: { requested: true },
+          transfers: { requested: true },
+        },
+        metadata: {
+          userId: req.user.id,
+          travellerProfileId: profile.id,
+          type: 'TRAVELLER',
+        },
+      });
+
+      accountId = account.id;
+
+      await prisma.travellerProfile.update({
+        where: { id: profile.id },
+        data: {
+          stripeConnectAccountId: accountId,
+          stripeConnectStatus: 'IN_PROGRESS',
+        } as any,
+      });
+    }
+
+    const accountLink = await stripe.accountLinks.create({
+      account: accountId,
+      refresh_url: dto.returnUrl,
+      return_url: dto.returnUrl,
+      type: 'account_onboarding',
+    });
+
+    return { url: accountLink.url };
+  },
+
+  async getConnectStatus(req: AuthRequest) {
+    if (!req.user) throw new ForbiddenError();
+
+    const profile = await prisma.travellerProfile.findUnique({
+      where: { userId: req.user.id },
+    });
+
+    const connectAccountId = (profile as any)?.stripeConnectAccountId as string | null;
+
+    if (!profile || !connectAccountId) {
+      return {
+        stripeConnectAccountId: null,
+        stripeConnectStatus: 'NOT_STARTED',
+        payoutsEnabled: false,
+        verificationStatus: profile?.verificationStatus || 'NOT_STARTED',
+      };
+    }
+
+    const account = await stripe.accounts.retrieve(connectAccountId);
+
+    let connectStatus: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETE' = 'NOT_STARTED';
+    if (account.details_submitted && account.charges_enabled && account.payouts_enabled) {
+      connectStatus = 'COMPLETE';
+    } else if (account.details_submitted || account.charges_enabled || account.payouts_enabled) {
+      connectStatus = 'IN_PROGRESS';
+    }
+
+    const payoutsEnabled = account.payouts_enabled || false;
+
+    const updateData: any = {
+      stripeConnectStatus: connectStatus,
+      payoutsEnabled,
+    };
+
+    if (payoutsEnabled && profile.verificationStatus !== 'VERIFIED') {
+      updateData.verificationStatus = 'VERIFIED';
+      updateData.idVerified = true;
+    }
+
+    await prisma.travellerProfile.update({
+      where: { id: profile.id },
+      data: updateData,
+    });
+
+    return {
+      stripeConnectAccountId: connectAccountId,
+      stripeConnectStatus: connectStatus,
+      payoutsEnabled,
+      verificationStatus: payoutsEnabled ? 'VERIFIED' : profile.verificationStatus,
+    };
+  },
+
+  async getConnectDashboardLink(req: AuthRequest) {
+    if (!req.user) throw new ForbiddenError();
+
+    const profile = await prisma.travellerProfile.findUnique({
+      where: { userId: req.user.id },
+    });
+
+    const connectAccountId = (profile as any)?.stripeConnectAccountId as string | null;
+    if (!connectAccountId) {
+      throw new BadRequestError('Stripe Connect account not found. Please complete payout setup first.');
+    }
+
+    const loginLink = await stripe.accounts.createLoginLink(connectAccountId);
+    return { url: loginLink.url };
+  },
+
+  async getConnectBalance(req: AuthRequest) {
+    if (!req.user) throw new ForbiddenError();
+
+    const profile = await prisma.travellerProfile.findUnique({
+      where: { userId: req.user.id },
+    });
+
+    const connectAccountId = (profile as any)?.stripeConnectAccountId as string | null;
+    if (!connectAccountId) {
+      return { available: 0, pending: 0, currency: 'gbp' };
+    }
+
+    try {
+      const balance = await stripe.balance.retrieve({
+        stripeAccount: connectAccountId,
+      });
+
+      const primary = balance.available[0];
+      const primaryPending = balance.pending[0];
+
+      return {
+        available: primary?.amount || 0,
+        pending: primaryPending?.amount || 0,
+        currency: primary?.currency || 'gbp',
+      };
+    } catch (error: any) {
+      if (error.code === 'resource_missing' || error.type === 'invalid_request_error') {
+        return { available: 0, pending: 0, currency: 'gbp' };
+      }
+      throw error;
+    }
+  },
+
+  async getEarnings(req: AuthRequest) {
+    if (!req.user) throw new ForbiddenError();
+
+    const listings = await prisma.travelCourierListing.findMany({
+      where: { userId: req.user.id },
+      select: { id: true },
+    });
+
+    const listingIds = listings.map((l) => l.id);
+
+    if (listingIds.length === 0) {
+      return {
+        summary: {
+          totalEarnedMinor: 0,
+          totalPlatformFeesMinor: 0,
+          totalNetPayoutMinor: 0,
+          totalBookings: 0,
+          completedBookings: 0,
+          pendingPayouts: 0,
+          currency: 'GBP',
+        },
+        earnings: [],
+      };
+    }
+
+    const bookings = await prisma.travelCourierBooking.findMany({
+      where: {
+        listingId: { in: listingIds },
+        status: { in: ['COMPLETED', 'DELIVERED_PENDING_CUSTOMER_CONFIRMATION'] },
+      },
+      include: {
+        listing: {
+          select: {
+            originCity: true,
+            originCountry: true,
+            destinationCity: true,
+            destinationCountry: true,
+            departureDate: true,
+          },
+        },
+        customer: { select: { fullName: true } },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    let totalEarnedMinor = 0;
+    let totalPlatformFeesMinor = 0;
+    let totalNetPayoutMinor = 0;
+    let completedBookings = 0;
+    let pendingPayouts = 0;
+    let currency = 'GBP';
+
+    const earnings = bookings.map((b) => {
+      const fee = (b as any).platformFeeMinor || 0;
+      const net = (b as any).payoutTransferAmountMinor || 0;
+      const isPaidOut = b.payoutReleased && (b as any).stripeTransferId;
+
+      totalEarnedMinor += b.baseAmountMinor;
+      totalPlatformFeesMinor += fee;
+      totalNetPayoutMinor += net;
+      currency = (b as any).currency || currency;
+
+      if (isPaidOut) completedBookings++;
+      else if (b.status === 'DELIVERED_PENDING_CUSTOMER_CONFIRMATION' || (b.payoutReleased && !(b as any).stripeTransferId)) {
+        pendingPayouts++;
+      }
+
+      return {
+        bookingId: b.id,
+        route: `${b.listing.originCity} → ${b.listing.destinationCity}`,
+        originCountry: b.listing.originCountry,
+        destinationCountry: b.listing.destinationCountry,
+        departureDate: b.listing.departureDate,
+        customerName: b.customer.fullName,
+        weightKg: b.requestedWeightKg,
+        currency: (b as any).currency || 'GBP',
+        baseAmountMinor: b.baseAmountMinor,
+        platformFeeMinor: fee,
+        netPayoutMinor: net,
+        status: isPaidOut ? 'PAID' as const : b.payoutReleased ? 'TRANSFER_PENDING' as const : 'AWAITING_RELEASE' as const,
+        payoutReleasedAt: b.payoutReleasedAt,
+        stripeTransferId: (b as any).stripeTransferId || null,
+        completedAt: b.updatedAt,
+      };
+    });
+
+    return {
+      summary: {
+        totalEarnedMinor,
+        totalPlatformFeesMinor,
+        totalNetPayoutMinor,
+        totalBookings: bookings.length,
+        completedBookings,
+        pendingPayouts,
+        currency,
+      },
+      earnings,
+    };
   },
 };

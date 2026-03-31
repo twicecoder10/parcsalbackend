@@ -27,6 +27,10 @@ export interface CreateShipmentData {
   pricePerKg?: number | null;
   pricePerItem?: number | null;
   flatPrice?: number | null;
+  pricePerKgMinor?: number | null;
+  pricePerItemMinor?: number | null;
+  flatPriceMinor?: number | null;
+  currency?: string;
   cutoffTimeForReceivingItems: Date;
   status: ShipmentStatus;
   bookingNotes?: string | null;

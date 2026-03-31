@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { bookingIdValidator } from '../../utils/validators';
+import { bookingIdValidator, normalizeCountryCode } from '../../utils/validators';
 
 const bookingStatusEnum = z.enum(['PENDING', 'ACCEPTED', 'REJECTED', 'CANCELLED', 'IN_TRANSIT', 'DELIVERED']);
 const bookingTrackingStatusEnum = z.enum([
@@ -46,7 +46,7 @@ export const createBookingSchema = z.object({
     pickupAddress: z.string().optional().nullable(),
     pickupCity: z.string().optional().nullable(),
     pickupState: z.string().optional().nullable(),
-    pickupCountry: z.string().optional().nullable(),
+    pickupCountry: z.string().transform((v) => normalizeCountryCode(v)).optional().nullable(),
     pickupPostalCode: z.string().optional().nullable(),
     pickupContactName: z.string().optional().nullable(),
     pickupContactPhone: z.string().optional().nullable(),
@@ -56,7 +56,7 @@ export const createBookingSchema = z.object({
     deliveryAddress: z.string().optional().nullable(),
     deliveryCity: z.string().optional().nullable(),
     deliveryState: z.string().optional().nullable(),
-    deliveryCountry: z.string().optional().nullable(),
+    deliveryCountry: z.string().transform((v) => normalizeCountryCode(v)).optional().nullable(),
     deliveryPostalCode: z.string().optional().nullable(),
     deliveryContactName: z.string().optional().nullable(),
     deliveryContactPhone: z.string().optional().nullable(),

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { flexibleCountryCodeValidator, isoCurrencyCodeValidator } from '../../utils/validators';
 
 const requestStatusEnum = z.enum(['OPEN', 'QUOTED', 'ACCEPTED', 'CANCELLED', 'EXPIRED']);
 const quoteStatusEnum = z.enum(['PENDING', 'AWAITING_PAYMENT', 'ACCEPTED', 'REJECTED', 'EXPIRED']);
@@ -6,9 +7,9 @@ const quoteStatusEnum = z.enum(['PENDING', 'AWAITING_PAYMENT', 'ACCEPTED', 'REJE
 export const createShipmentRequestSchema = z.object({
   body: z.object({
     originCity: z.string().min(1, 'originCity is required'),
-    originCountry: z.string().min(1, 'originCountry is required'),
+    originCountry: flexibleCountryCodeValidator,
     destinationCity: z.string().min(1, 'destinationCity is required'),
-    destinationCountry: z.string().min(1, 'destinationCountry is required'),
+    destinationCountry: flexibleCountryCodeValidator,
     weightKg: z.number().positive().optional().nullable(),
     itemsCount: z.number().int().positive().optional().nullable(),
     preferredMode: z.enum(['AIR_CARGO', 'SEA_CARGO', 'AIR_FREIGHT']).optional().nullable(),
@@ -45,7 +46,7 @@ export const createQuoteSchema = z.object({
   }),
   body: z.object({
     priceMinor: z.number().int().positive(),
-    currency: z.string().min(3).max(3).optional().default('GBP'),
+    currency: isoCurrencyCodeValidator.default('GBP'),
     estimatedDays: z.number().int().positive(),
     note: z.string().max(2000).optional().nullable(),
     validUntil: z.coerce.date(),
