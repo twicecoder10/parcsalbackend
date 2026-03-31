@@ -151,6 +151,13 @@ router.get(
 );
 
 router.post(
+  '/my-bookings/:id/payment',
+  authenticate,
+  validate(bookingIdParamSchema),
+  travelCourierController.getPaymentUrl
+);
+
+router.post(
   '/my-bookings/:id/confirm-delivery',
   authenticate,
   validate(bookingIdParamSchema),

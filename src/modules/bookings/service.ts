@@ -469,18 +469,117 @@ export const bookingService = {
     }
 
     const pagination = parsePagination(query);
-    const status = query.status as any;
+    const status = query.status as string | undefined;
     const search = query.search as string | undefined;
 
-    const { bookings, total } = await bookingRepository.findByCustomer(
+    const overFetchLimit = pagination.offset + pagination.limit;
+
+    // --- BKG bookings (existing) ---
+    const { bookings: bkgBookings, total: bkgTotal } = await bookingRepository.findByCustomer(
       req.user.id,
-      { ...pagination, status, search }
+      { limit: overFetchLimit, offset: 0, status: status as any, search }
     );
 
-    // Sanitize sensitive data for customer
-    const sanitizedBookings = bookings.map(booking => this.sanitizeBookingForCustomer(booking));
+    // --- TCB bookings ---
+    const bkgToTcbStatusMap: Record<string, string[]> = {
+      PENDING: ['PENDING_APPROVAL', 'APPROVED_AWAITING_PAYMENT'],
+      ACCEPTED: ['CONFIRMED'],
+      IN_TRANSIT: ['IN_TRANSIT'],
+      DELIVERED: ['DELIVERED_PENDING_CUSTOMER_CONFIRMATION', 'COMPLETED'],
+      REJECTED: ['REJECTED'],
+      CANCELLED: ['CANCELLED'],
+    };
 
-    return createPaginatedResponse(sanitizedBookings, total, pagination);
+    let skipTcb = false;
+    const tcbWhere: any = { customerId: req.user.id };
+
+    if (status) {
+      const mapped = bkgToTcbStatusMap[status];
+      if (mapped) {
+        tcbWhere.status = { in: mapped };
+      } else {
+        skipTcb = true;
+      }
+    }
+
+    if (search && !skipTcb) {
+      const searchUpper = search.toUpperCase();
+      const tcbStatusMatches: any[] = [];
+      const validTcbStatuses = [
+        'PENDING_APPROVAL', 'APPROVED_AWAITING_PAYMENT', 'CONFIRMED',
+        'IN_TRANSIT', 'DELIVERED_PENDING_CUSTOMER_CONFIRMATION', 'COMPLETED',
+        'REJECTED', 'CANCELLED', 'DISPUTED',
+      ];
+      validTcbStatuses.forEach(s => {
+        if (s.includes(searchUpper)) {
+          tcbStatusMatches.push({ status: s });
+        }
+      });
+
+      tcbWhere.OR = [
+        { id: { contains: search, mode: 'insensitive' } },
+        {
+          listing: {
+            OR: [
+              { originCity: { contains: search, mode: 'insensitive' } },
+              { originCountry: { contains: search, mode: 'insensitive' } },
+              { destinationCity: { contains: search, mode: 'insensitive' } },
+              { destinationCountry: { contains: search, mode: 'insensitive' } },
+            ],
+          },
+        },
+        ...tcbStatusMatches,
+      ];
+    }
+
+    let tcbBookings: any[] = [];
+    let tcbTotal = 0;
+
+    if (!skipTcb) {
+      [tcbBookings, tcbTotal] = await Promise.all([
+        prisma.travelCourierBooking.findMany({
+          where: tcbWhere,
+          include: {
+            listing: {
+              select: {
+                id: true,
+                originCity: true,
+                originCountry: true,
+                destinationCity: true,
+                destinationCountry: true,
+                departureDate: true,
+                pricePerKgMinor: true,
+                currency: true,
+                user: { select: { id: true, fullName: true } },
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: overFetchLimit,
+        }),
+        prisma.travelCourierBooking.count({ where: tcbWhere }),
+      ]);
+    }
+
+    // Tag and sanitize
+    const taggedBkg = bkgBookings.map(b => ({
+      ...this.sanitizeBookingForCustomer(b),
+      type: 'BKG' as const,
+    }));
+
+    const taggedTcb = tcbBookings.map(b => ({
+      ...b,
+      type: 'TCB' as const,
+    }));
+
+    // Merge, sort by createdAt desc, then paginate
+    const merged = [...taggedBkg, ...taggedTcb]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(pagination.offset, pagination.offset + pagination.limit);
+
+    const total = bkgTotal + tcbTotal;
+
+    return createPaginatedResponse(merged, total, pagination);
   },
 
   async getCompanyBookings(req: AuthRequest, query: any) {

@@ -596,6 +596,65 @@ export const travelCourierService = {
     return { booking: updated, checkoutUrl: session.url };
   },
 
+  async getPaymentUrl(req: AuthRequest, bookingId: string) {
+    if (!req.user) throw new ForbiddenError();
+
+    const booking = await prisma.travelCourierBooking.findUnique({
+      where: { id: bookingId },
+      include: { listing: true },
+    });
+
+    if (!booking) throw new NotFoundError('Booking not found');
+    if (booking.customerId !== req.user.id) throw new ForbiddenError();
+    if (booking.status !== 'APPROVED_AWAITING_PAYMENT') {
+      throw new BadRequestError('Booking is not awaiting payment');
+    }
+
+    if (booking.stripeCheckoutSessionId) {
+      try {
+        const existing = await stripe.checkout.sessions.retrieve(booking.stripeCheckoutSessionId);
+        if (existing.status === 'open' && existing.url) {
+          return { sessionId: existing.id, checkoutUrl: existing.url };
+        }
+      } catch {
+        // Session expired or invalid — fall through to create a new one
+      }
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price_data: {
+            currency: booking.listing.currency.toLowerCase(),
+            product_data: {
+              name: `Travel Courier - ${booking.listing.originCity} → ${booking.listing.destinationCity}`,
+              description: `${booking.requestedWeightKg} kg | Booking ${booking.id}`,
+            },
+            unit_amount: booking.totalAmountMinor,
+          },
+          quantity: 1,
+        },
+      ],
+      mode: 'payment',
+      success_url: `${config.frontendUrl}/parcsal-traveller/bookings/${booking.id}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${config.frontendUrl}/parcsal-traveller/bookings/${booking.id}?payment=cancelled`,
+      metadata: {
+        travelCourierBookingId: booking.id,
+        listingId: booking.listingId,
+        customerId: booking.customerId,
+      },
+      client_reference_id: booking.id,
+    });
+
+    await prisma.travelCourierBooking.update({
+      where: { id: bookingId },
+      data: { stripeCheckoutSessionId: session.id },
+    });
+
+    return { sessionId: session.id, checkoutUrl: session.url };
+  },
+
   async rejectBooking(req: AuthRequest, bookingId: string) {
     if (!req.user) throw new ForbiddenError();
 

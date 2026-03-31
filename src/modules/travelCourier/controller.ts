@@ -139,6 +139,15 @@ export const travelCourierController = {
     }
   },
 
+  async getPaymentUrl(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const result = await travelCourierService.getPaymentUrl(req, req.params.id);
+      res.status(200).json({ status: 'success', data: result });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async rejectBooking(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const result = await travelCourierService.rejectBooking(req, req.params.id);
